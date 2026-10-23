@@ -15,12 +15,12 @@
 | **API 게이트웨이 & 런타임** | Python 3.12 + **FastAPI** (`uvicorn`) | LangChain/임베딩 코어가 Python 런타임을 사용하므로 별도 Node 게이트웨이 없이 단일 런타임으로 운영 복잡도 최소화 |
 | **RAG 오케스트레이션** | **LangChain (Python)** | 문서 분할, 벡터 스토어(`langchain-postgres`), 로컬 임베딩(`langchain-huggingface`), 오픈소스/상용 LLM 통합 성숙도 최고 |
 | **관계형 & 벡터 DB** | **Supabase (PostgreSQL + `pgvector`)** | 동적 리서치 타겟 테이블(`research_targets`), 수집 중복 방지(`ingested_sources`), 벡터 임베딩/메타데이터 검색(`PGVectorRetriever`)을 단일 DB에서 일관되게 처리 |
-| **임베딩 모델** | **`BAAI/bge-m3`** (`sentence-transformers`) | API 키/비용 없이 구동 가능하며, 한국어·영어 다국어 검색 성능 및 생태계 안정성이 검증된 오픈소스 모델 |
-| **답변 생성 & 다이제스트 LLM** | **Ollama (`Nous Hermes 3` / `Llama`, 기본 `hermes3:8b`)** + 선택적 **Claude** | 외부 서버/컨테이너의 오픈소스 LLM(`OLLAMA_BASE_URL`, `OLLAMA_MODEL_NAME="hermes3:8b"`)을 기본(`LLM_PROVIDER="ollama"`)으로 사용하여 API 비용 없이 3줄 요약 및 RAG 답변을 생성하며, 필요 시 `LLM_PROVIDER="anthropic"`으로 전환 가능 |
+| **임베딩 모델** | **`Snowflake/snowflake-arctic-embed-l-v2.0`** (`sentence-transformers`, 미국 Snowflake) | 신뢰도 측면에서 중국계 기술을 전면 배제하고, Apache 2.0 라이선스·1024차원·8,192 토큰·한국어 검색 최상위 성능을 제공하는 미국 Snowflake 오픈소스 모델 채택 |
+| **답변 생성 & 다이제스트 LLM** | **Ollama (기본 A: `Google Gemma 3` `gemma3:12b` / 비교 C: `Nous Hermes 3` `hermes3:8b`)** + 선택적 **Claude** | 외부 서버/컨테이너의 오픈소스 LLM(`OLLAMA_BASE_URL`, 기본 `OLLAMA_MODEL_NAME="gemma3:12b"`)을 사용하여 한국어 3줄 요약 및 RAG 답변을 생성하며, `POST /brief/compare`로 모델 A(`gemma3:12b`)와 모델 C(`hermes3:8b`) 요약 결과를 병행 비교 가능 |
 | **브리핑 아티클 웹 UI** | **Vercel (`assist-brief.vercel.app`)** | 일자별 브리핑 1건당 상세 아티클 페이지(`/articles/<slug>`) 및 원문 릴리스 링크 제공 |
 | **알림 & 대화 인터페이스** | **Telegram Bot API (`@DomAssistBot`)** | `제이들` 그룹으로 매일 핵심 3줄 요약 + 상세 아티클 링크 발송(`sendMessage`) 및 양방향 웹훅(`POST /webhook/telegram`) 질의응답 |
 | **시크릿 관리** | **`pass` (Password Store)** | `telegram/bot-token`, `telegram/chat-id`, `github/gh-token`, `vercel.com/token-jsconn`, `supabase/secrets` 등 민감 자격증명을 평문 파일 없이 런타임 주입 |
-| **배포 & 컨테이너 런타임** | **Docker & Docker Compose (`Dockerfile`, `docker-compose.yml`)** | 로컬 개발 머신에 무거운 모델을 직접 띄우지 않고 별도 서버/컨테이너 환경에서 `assist` API와 `ollama`(`hermes3:8b`)를 함께 구동 |
+| **배포 & 컨테이너 런타임** | **Docker & Docker Compose (`Dockerfile`, `docker-compose.yml`)** | 로컬 개발 머신에 무거운 모델을 직접 띄우지 않고 별도 서버/컨테이너 환경에서 `assist` API와 `ollama`(`gemma3:12b` / `hermes3:8b`)를 함께 구동 |
 
 ```mermaid
 flowchart LR
@@ -35,9 +35,9 @@ flowchart LR
     end
 
     subgraph Pipeline["FastAPI + LangChain 코어"]
-        ING["Ingest 파이프라인\n(중복 체크 + chunking + bge-m3)"]
+        ING["Ingest 파이프라인\n(중복 체크 + chunking + Arctic Embed v2)"]
         DIG["아침 리포트 생성기\n(신규 수집분 도메인별 Digest)"]
-        RET["RAG 질의 엔진\n(pgvector 검색 + Claude 생성)"]
+        RET["RAG 질의 엔진\n(pgvector 검색 + Gemma 3 / Hermes 3 생성)"]
     end
 
     subgraph Storage["지식 저장소"]
@@ -134,7 +134,7 @@ CREATE TABLE IF NOT EXISTS ingested_sources (
 
 ### Phase 1 — 코어 Ingestion 파이프라인 (MVP 1단계)
 1. **환경 및 설정 (`app/config.py`)**:
-   - `pydantic-settings` 기반 환경변수 로드 (`SUPABASE_DB_URL`, `ANTHROPIC_API_KEY`, `EMBEDDING_MODEL_NAME="BAAI/bge-m3"`, `VECTOR_COLLECTION_NAME="tech_trends"`)
+   - `pydantic-settings` 기반 환경변수 로드 (`SUPABASE_DB_URL`, `OLLAMA_MODEL_NAME="gemma3:12b"`, `EMBEDDING_MODEL_NAME="Snowflake/snowflake-arctic-embed-l-v2.0"`, `VECTOR_COLLECTION_NAME="tech_trends"`)
 2. **텍스트 청킹 (`tests/test_chunking.py` → `app/chunking.py`)**:
    - `chunk_text(text, metadata, chunk_size, chunk_overlap)`: 빈 문자열 처리, 긴 텍스트 분할 및 오버랩 보장, 원본 메타데이터(`domain`, `target_name`, `source_url`) 및 `chunk_index` 보존 검증
 3. **문서 적재 오케스트레이션 (`tests/test_ingest.py` → `app/ingest.py`)**:

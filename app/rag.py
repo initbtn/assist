@@ -8,6 +8,45 @@ from pydantic import BaseModel
 from app.config import Settings, settings
 from app.ingest import get_vector_store
 
+OLLAMA_MODEL_PRESETS: dict[str, str] = {
+    "A": "gemma3:12b",
+    "C": "hermes3:8b",
+}
+
+_EXCLUDED_MODEL_PREFIXES: tuple[str, ...] = (
+    "qwen",
+    "deepseek",
+    "baai",
+    "bge",
+    "yi",
+    "glm",
+    "baichuan",
+)
+
+
+def resolve_ollama_model_name(model_or_preset: str) -> str:
+    cleaned = (model_or_preset or "").strip()
+    if not cleaned:
+        raise ValueError("OLLAMA_MODEL_NAME (or model preset) must not be empty")
+
+    upper_key = cleaned.upper()
+    if upper_key == "B":
+        raise ValueError("Excluded model preset 'B': Chinese-origin models are not permitted")
+    if upper_key in OLLAMA_MODEL_PRESETS:
+        return OLLAMA_MODEL_PRESETS[upper_key]
+
+    lower_val = cleaned.lower()
+    if any(lower_val.startswith(prefix) for prefix in _EXCLUDED_MODEL_PREFIXES):
+        raise ValueError(f"Excluded model '{cleaned}': Chinese-origin models are not permitted")
+
+    if ":" in cleaned:
+        name_part, tag_part = cleaned.split(":", 1)
+        if not name_part.strip() or not tag_part.strip():
+            raise ValueError(f"Invalid model tag format: {cleaned}")
+
+    return cleaned
+
+
 
 class QueryResult(BaseModel):
     answer: str
@@ -94,9 +133,11 @@ class OllamaLLMWrapper:
         cfg: Settings,
         *,
         http_post: Callable[[str, dict[str, Any]], dict[str, Any]] = _default_ollama_post,
+        model_override: str | None = None,
     ) -> None:
         self.base_url = cfg.ollama_base_url.strip().rstrip("/")
-        self.model_name = cfg.ollama_model_name.strip()
+        raw_model = model_override if model_override is not None else cfg.ollama_model_name
+        self.model_name = resolve_ollama_model_name(raw_model)
         self._http_post = http_post
 
     def generate(self, prompt: str) -> str:
@@ -131,15 +172,17 @@ def get_llm(
     cfg: Settings = settings,
     *,
     ollama_http_post: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+    model_override: str | None = None,
 ) -> LLMProtocol:
     provider = (cfg.llm_provider or "").strip().lower()
     if provider == "ollama":
         if not cfg.ollama_base_url or not cfg.ollama_base_url.strip():
             raise ValueError("OLLAMA_BASE_URL must not be empty")
-        if not cfg.ollama_model_name or not cfg.ollama_model_name.strip():
+        raw_model = model_override if model_override is not None else cfg.ollama_model_name
+        if not raw_model or not raw_model.strip():
             raise ValueError("OLLAMA_MODEL_NAME must not be empty")
         post_fn = ollama_http_post if ollama_http_post is not None else _default_ollama_post
-        return OllamaLLMWrapper(cfg, http_post=post_fn)
+        return OllamaLLMWrapper(cfg, http_post=post_fn, model_override=model_override)
 
     if provider == "anthropic":
         if not cfg.anthropic_api_key or not cfg.anthropic_api_key.strip():

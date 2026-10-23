@@ -41,6 +41,14 @@ class BriefingArticle(BaseModel):
     article_url: str
 
 
+class ModelBriefComparison(BaseModel):
+    model_name: str
+    summary_lines: list[str]
+    telegram_message: str
+    article_url: str
+
+
+
 def _clean_summary_line(line: str) -> str:
     stripped = line.strip()
     if not stripped or stripped.startswith("#"):
@@ -196,6 +204,39 @@ def format_telegram_brief_message(article: BriefingArticle) -> str:
         f"{numbered}\n\n"
         f"🔗 상세 아티클 보기: {article.article_url}"
     )
+
+
+def compare_briefing_models(
+    documents: list[Document],
+    *,
+    model_llms: dict[str, LLMProtocol],
+    date_str: str | None = None,
+    base_ui_url: str = "https://assist-brief.vercel.app",
+) -> dict[str, ModelBriefComparison]:
+    if not model_llms:
+        raise ValueError("model_llms must not be empty")
+
+    comparisons: dict[str, ModelBriefComparison] = {}
+    for raw_key, model_llm in model_llms.items():
+        cleaned_key = (raw_key or "").strip()
+        if not cleaned_key:
+            raise ValueError("model_llms key must not be empty")
+        article = build_briefing_article(
+            documents,
+            llm=model_llm,
+            date_str=date_str,
+            base_ui_url=base_ui_url,
+        )
+        telegram_msg = format_telegram_brief_message(article)
+        comparisons[cleaned_key] = ModelBriefComparison(
+            model_name=cleaned_key,
+            summary_lines=article.summary_lines,
+            telegram_message=telegram_msg,
+            article_url=article.article_url,
+        )
+
+    return comparisons
+
 
 
 class InMemoryArticleStore:

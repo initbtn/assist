@@ -45,10 +45,10 @@ class Settings(BaseSettings):
     use_pgvector: bool = False
     llm_provider: str = "ollama"
     ollama_base_url: str = "http://localhost:11434"
-    ollama_model_name: str = "hermes3:8b"
+    ollama_model_name: str = "gemma3:12b"
     anthropic_api_key: str = ""
     llm_model_name: str = "claude-sonnet-4-5"
-    embedding_model_name: str = "BAAI/bge-m3"
+    embedding_model_name: str = "Snowflake/snowflake-arctic-embed-l-v2.0"
     vector_collection_name: str = "tech_trends"
     github_token: str = ""
     telegram_bot_token: str = ""

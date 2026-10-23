@@ -6,8 +6,10 @@ from langchain_core.documents import Document
 
 from app.articles import (
     InMemoryArticleStore,
+    ModelBriefComparison,
     build_briefing_article,
     build_vercel_deployment_payload,
+    compare_briefing_models,
     export_articles_to_web,
     extract_three_line_summary,
     format_telegram_brief_message,
@@ -172,3 +174,73 @@ def test_article_store_and_export_to_web_and_vercel_payload(tmp_path: Path):
 
     with pytest.raises(ValueError, match="web_dir"):
         build_vercel_deployment_payload(tmp_path / "non-existent")
+
+
+def test_compare_briefing_models_four_boundary_cases():
+    docs = _sample_docs()
+
+    class StubModelLLM:
+        def __init__(self, tag: str, lines: list[str]) -> None:
+            self.tag = tag
+            self.lines = lines
+
+        def generate(self, prompt: str) -> str:
+            return "\n".join(self.lines)
+
+    llm_a = StubModelLLM(
+        "gemma3:12b",
+        [
+            "1. [Gemma3] Claude Code v2.1 서브에이전트 컨텍스트 격리 강화",
+            "2. [Gemma3] Next.js 16 Cache Components 및 MCP 서버 내장",
+            "3. [Gemma3] Kubernetes v1.33 사이드카 컨테이너 안정화",
+        ],
+    )
+    llm_c = StubModelLLM(
+        "hermes3:8b",
+        [
+            "1. [Hermes3] Claude Code v2.1 에이전트 훅 및 격리 도입",
+            "2. [Hermes3] Next.js 16 명시적 캐싱 및 DevTools MCP 탑재",
+            "3. [Hermes3] Kubernetes v1.33 네이티브 사이드카 정식 지원",
+        ],
+    )
+
+    # 1) 정상값: A(gemma3:12b)와 C(hermes3:8b) 두 모델 비교
+    results = compare_briefing_models(
+        docs,
+        model_llms={"A (gemma3:12b)": llm_a, "C (hermes3:8b)": llm_c},
+        date_str="2026-10-23",
+        base_ui_url="https://assist-brief.vercel.app",
+    )
+    assert list(results.keys()) == ["A (gemma3:12b)", "C (hermes3:8b)"]
+    comp_a = results["A (gemma3:12b)"]
+    comp_c = results["C (hermes3:8b)"]
+    assert isinstance(comp_a, ModelBriefComparison)
+    assert comp_a.summary_lines[0] == "[Gemma3] Claude Code v2.1 서브에이전트 컨텍스트 격리 강화"
+    assert comp_c.summary_lines[0] == "[Hermes3] Claude Code v2.1 에이전트 훅 및 격리 도입"
+    assert "https://assist-brief.vercel.app/articles/2026-10-23" in comp_a.telegram_message
+    assert "https://assist-brief.vercel.app/articles/2026-10-23" in comp_c.telegram_message
+
+    # 2) 맞지만 헷갈리는 값: 모델 키 앞뒤에 공백이 포함된 경우 정제된 키로 반환
+    res_trimmed = compare_briefing_models(
+        docs,
+        model_llms={"  A  ": llm_a},
+        date_str="2026-10-23",
+    )
+    assert list(res_trimmed.keys()) == ["A"]
+    assert len(res_trimmed["A"].summary_lines) == 3
+
+    # 3) 일부만 맞는 값: 빈 문서 리스트일 때도 각 모델별 기본 3줄 폴백으로 비교 결과 생성
+    res_empty_docs = compare_briefing_models(
+        [],
+        model_llms={"A": llm_a, "C": llm_c},
+        date_str="2026-10-23",
+    )
+    assert len(res_empty_docs["A"].summary_lines) == 3
+    assert len(res_empty_docs["C"].summary_lines) == 3
+
+    # 4) 완전히 틀린 값: model_llms가 비어 있거나 공백 키만 있을 때 ValueError 발생
+    with pytest.raises(ValueError, match="model_llms"):
+        compare_briefing_models(docs, model_llms={})
+    with pytest.raises(ValueError, match="model_llms"):
+        compare_briefing_models(docs, model_llms={"   ": llm_a})
+
