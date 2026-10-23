@@ -10,6 +10,7 @@ from app.config import (
     Settings,
     build_gcp_allowed_source_ranges,
     resolve_pass_secret,
+    should_purge_swap,
 )
 from app.rag import FakeMemoryRetriever
 from app.targets import (
@@ -257,3 +258,35 @@ def test_build_gcp_allowed_source_ranges_four_boundary_cases():
         build_gcp_allowed_source_ranges("0.0.0.0/0")
     with pytest.raises(ValueError, match="admin_ip"):
         build_gcp_allowed_source_ranges("not-an-ip-address")
+
+
+def test_should_purge_swap_four_boundary_cases():
+    # 1) 정상값: 사용 중인 Swap이 있고(>0), 가용 RAM이 (Swap 사용량 + 안전 마진 64MB) 이상일 때 True
+    assert should_purge_swap(mem_available_kb=400_000, swap_used_kb=100_000) is True
+
+    # 2) 맞지만 헷갈리는 값: 정확히 경계치(swap_used + safety_margin == mem_available)일 때 True, Swap이 0이면 False
+    assert (
+        should_purge_swap(
+            mem_available_kb=165_536, swap_used_kb=100_000, safety_margin_kb=65_536
+        )
+        is True
+    )
+    assert should_purge_swap(mem_available_kb=500_000, swap_used_kb=0) is False
+
+    # 3) 일부만 맞는 값: 가용 RAM이 Swap 사용량보다는 크지만 안전 마진(64MB)을 합치면 부족한 경우 False (OOM 방지)
+    assert (
+        should_purge_swap(
+            mem_available_kb=120_000, swap_used_kb=100_000, safety_margin_kb=65_536
+        )
+        is False
+    )
+
+    # 4) 완전히 틀린 값: 음수 메모리/스왑/마진 입력 시 ValueError
+    with pytest.raises(ValueError, match="non-negative"):
+        should_purge_swap(mem_available_kb=-1, swap_used_kb=100)
+    with pytest.raises(ValueError, match="non-negative"):
+        should_purge_swap(mem_available_kb=100_000, swap_used_kb=-5)
+    with pytest.raises(ValueError, match="non-negative"):
+        should_purge_swap(
+            mem_available_kb=100_000, swap_used_kb=10, safety_margin_kb=-1
+        )

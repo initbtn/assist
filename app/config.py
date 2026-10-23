@@ -31,6 +31,19 @@ def build_gcp_allowed_source_ranges(
     return ",".join(ranges)
 
 
+def should_purge_swap(
+    *,
+    mem_available_kb: int,
+    swap_used_kb: int,
+    safety_margin_kb: int = 65_536,
+) -> bool:
+    if mem_available_kb < 0 or swap_used_kb < 0 or safety_margin_kb < 0:
+        raise ValueError("Memory and swap values must be non-negative")
+    if swap_used_kb == 0:
+        return False
+    return mem_available_kb >= (swap_used_kb + safety_margin_kb)
+
+
 def _default_pass_runner(key_path: str) -> str:
     proc = subprocess.run(
         ["pass", "show", key_path],

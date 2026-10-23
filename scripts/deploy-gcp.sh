@@ -5,8 +5,12 @@ INSTANCE_NAME="${GCP_INSTANCE_NAME:-marine-edge-pc}"
 ZONE="${GCP_ZONE:-us-central1-a}"
 FIREWALL_RULE="${GCP_FIREWALL_RULE:-allow-assist-api-8001}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON_BIN="${REPO_ROOT}/.venv/bin/python3"
-if [[ ! -x "${PYTHON_BIN}" ]]; then
+MAIN_REPO_ROOT="$(cd "$(git -C "${REPO_ROOT}" rev-parse --git-common-dir)/.." && pwd)"
+if [[ -x "${REPO_ROOT}/.venv/bin/python3" ]]; then
+  PYTHON_BIN="${REPO_ROOT}/.venv/bin/python3"
+elif [[ -x "${MAIN_REPO_ROOT}/.venv/bin/python3" ]]; then
+  PYTHON_BIN="${MAIN_REPO_ROOT}/.venv/bin/python3"
+else
   PYTHON_BIN="python3"
 fi
 
@@ -16,9 +20,9 @@ if ! gpg-connect-agent 'keyinfo --list' /bye 2>/dev/null | awk '$7 == 1 {found=1
   exit 1
 fi
 
-# 2. Resolve and validate allowed source IP ranges (Admin IP + Telegram Webhooks)
+# 2. Resolve and validate allowed source IP ranges via sys.argv[1]
 ADMIN_IP="${ADMIN_IP:-$(curl -s --max-time 5 https://api.ipify.org)}"
-SOURCE_RANGES="$(PYTHONPATH="${REPO_ROOT}" "${PYTHON_BIN}" -c "from app.config import build_gcp_allowed_source_ranges; print(build_gcp_allowed_source_ranges('${ADMIN_IP}'))")"
+SOURCE_RANGES="$(PYTHONPATH="${REPO_ROOT}" "${PYTHON_BIN}" -c "import sys; from app.config import build_gcp_allowed_source_ranges; print(build_gcp_allowed_source_ranges(sys.argv[1]))" "${ADMIN_IP}")"
 
 echo "[1/4] Configuring GCP firewall rule ${FIREWALL_RULE} (source-ranges: ${SOURCE_RANGES})..."
 if gcloud compute firewall-rules describe "${FIREWALL_RULE}" >/dev/null 2>&1; then
@@ -34,8 +38,8 @@ else
     --quiet
 fi
 
-# 3. Ensure 2GB Swap on marine-edge-pc (idempotent)
-echo "[2/4] Ensuring 2GB swapfile on ${INSTANCE_NAME} (${ZONE})..."
+# 3. Ensure 2GB Swap + vm.swappiness=10 on marine-edge-pc (idempotent)
+echo "[2/4] Ensuring 2GB swapfile and vm.swappiness=10 on ${INSTANCE_NAME} (${ZONE})..."
 gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command="
   set -euo pipefail
   if ! sudo swapon --show | grep -q '/swapfile'; then
@@ -49,11 +53,13 @@ gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command="
       echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null
     fi
   fi
+  echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-swap.conf >/dev/null
+  sudo sysctl -w vm.swappiness=10 >/dev/null
   mkdir -p ~/assist
 "
 
-# 4. Sync source archive and start container with runtime-injected secrets
-echo "[3/4] Syncing source and starting assist-api container on ${INSTANCE_NAME}..."
+# 4. Sync source archive, start container via RAM tmpfs (/dev/shm), and purge swap after build
+echo "[3/4] Syncing source, starting assist-api container, and purging residual swap on ${INSTANCE_NAME}..."
 tar -C "${REPO_ROOT}" -czf - \
   Dockerfile \
   docker-compose.gcp.yml \
@@ -72,11 +78,26 @@ tar -C "${REPO_ROOT}" -czf - \
   printf 'USE_PGVECTOR=%s\n' "${USE_PGVECTOR:-false}"
 } | gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command="
   set -euo pipefail
+  TMP_ENV=\"/dev/shm/assist-env.\$\$\"
+  umask 077
+  trap 'shred -u \"\${TMP_ENV}\" 2>/dev/null || rm -f \"\${TMP_ENV}\"' EXIT
+  cat > \"\${TMP_ENV}\"
   cd ~/assist
   if sudo docker compose version >/dev/null 2>&1; then
-    sudo docker compose -f docker-compose.gcp.yml --env-file /dev/stdin up -d --build
+    sudo docker compose -f docker-compose.gcp.yml --env-file \"\${TMP_ENV}\" up -d --build
   else
-    sudo docker-compose -f docker-compose.gcp.yml --env-file /dev/stdin up -d --build
+    sudo docker-compose -f docker-compose.gcp.yml --env-file \"\${TMP_ENV}\" up -d --build
+  fi
+
+  # Drop build pagecache and purge swap if SwapUsed > 0 and MemAvailable >= SwapUsed + 64MB
+  sync
+  echo 1 | sudo tee /proc/sys/vm/drop_caches >/dev/null || true
+  MEM_AVAIL_KB=\$(awk '/^MemAvailable:/ {print \$2}' /proc/meminfo)
+  SWAP_TOTAL_KB=\$(awk '/^SwapTotal:/ {print \$2}' /proc/meminfo)
+  SWAP_FREE_KB=\$(awk '/^SwapFree:/ {print \$2}' /proc/meminfo)
+  SWAP_USED_KB=\$((SWAP_TOTAL_KB - SWAP_FREE_KB))
+  if (( SWAP_USED_KB > 0 && MEM_AVAIL_KB >= SWAP_USED_KB + 65536 )); then
+    sudo swapoff /swapfile && sudo swapon /swapfile
   fi
 "
 
