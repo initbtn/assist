@@ -5,12 +5,8 @@ INSTANCE_NAME="${GCP_INSTANCE_NAME:-marine-edge-pc}"
 ZONE="${GCP_ZONE:-us-central1-a}"
 FIREWALL_RULE="${GCP_FIREWALL_RULE:-allow-assist-api-8001}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MAIN_REPO_ROOT="$(cd "$(git -C "${REPO_ROOT}" rev-parse --git-common-dir)/.." && pwd)"
-if [[ -x "${REPO_ROOT}/.venv/bin/python3" ]]; then
-  PYTHON_BIN="${REPO_ROOT}/.venv/bin/python3"
-elif [[ -x "${MAIN_REPO_ROOT}/.venv/bin/python3" ]]; then
-  PYTHON_BIN="${MAIN_REPO_ROOT}/.venv/bin/python3"
-else
+PYTHON_BIN="${REPO_ROOT}/.venv/bin/python3"
+if [[ ! -x "${PYTHON_BIN}" ]]; then
   PYTHON_BIN="python3"
 fi
 

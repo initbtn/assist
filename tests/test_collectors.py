@@ -1,3 +1,6 @@
+from pathlib import Path
+import subprocess
+
 import pytest
 
 from app.collectors import (
@@ -10,7 +13,6 @@ from app.config import (
     Settings,
     build_gcp_allowed_source_ranges,
     resolve_pass_secret,
-    should_purge_swap,
 )
 from app.rag import FakeMemoryRetriever
 from app.targets import (
@@ -260,33 +262,51 @@ def test_build_gcp_allowed_source_ranges_four_boundary_cases():
         build_gcp_allowed_source_ranges("not-an-ip-address")
 
 
-def test_should_purge_swap_four_boundary_cases():
-    # 1) 정상값: 사용 중인 Swap이 있고(>0), 가용 RAM이 (Swap 사용량 + 안전 마진 64MB) 이상일 때 True
-    assert should_purge_swap(mem_available_kb=400_000, swap_used_kb=100_000) is True
+def test_deploy_gcp_script_swap_purge_and_tmpfs_four_boundary_cases():
+    script_path = Path(__file__).resolve().parent.parent / "scripts" / "deploy-gcp.sh"
+    content = script_path.read_text(encoding="utf-8")
 
-    # 2) 맞지만 헷갈리는 값: 정확히 경계치(swap_used + safety_margin == mem_available)일 때 True, Swap이 0이면 False
-    assert (
-        should_purge_swap(
-            mem_available_kb=165_536, swap_used_kb=100_000, safety_margin_kb=65_536
-        )
-        is True
-    )
-    assert should_purge_swap(mem_available_kb=500_000, swap_used_kb=0) is False
+    assert "build_gcp_allowed_source_ranges(sys.argv[1])" in content
+    assert "vm.swappiness=10" in content
+    assert "/dev/shm/assist-env" in content
+    assert "trap 'shred -u" in content
+    assert "sudo swapoff /swapfile && sudo swapon /swapfile" in content
 
-    # 3) 일부만 맞는 값: 가용 RAM이 Swap 사용량보다는 크지만 안전 마진(64MB)을 합치면 부족한 경우 False (OOM 방지)
-    assert (
-        should_purge_swap(
-            mem_available_kb=120_000, swap_used_kb=100_000, safety_margin_kb=65_536
+    def eval_swap_purge(mem_avail_kb: int, swap_total_kb: int, swap_free_kb: int) -> str:
+        # Extract the exact condition line from scripts/deploy-gcp.sh
+        cond_line = next(
+            line.strip()
+            for line in content.splitlines()
+            if "SWAP_USED_KB > 0 && MEM_AVAIL_KB >= SWAP_USED_KB + 65536" in line
         )
-        is False
-    )
+        bash_snippet = f"""
+        set -euo pipefail
+        MEM_AVAIL_KB={mem_avail_kb}
+        SWAP_TOTAL_KB={swap_total_kb}
+        SWAP_FREE_KB={swap_free_kb}
+        SWAP_USED_KB=$((SWAP_TOTAL_KB - SWAP_FREE_KB))
+        {cond_line}
+          echo "PURGED"
+        else
+          echo "SKIPPED"
+        fi
+        """
+        proc = subprocess.run(
+            ["bash", "-c", bash_snippet],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return proc.stdout.strip()
 
-    # 4) 완전히 틀린 값: 음수 메모리/스왑/마진 입력 시 ValueError
-    with pytest.raises(ValueError, match="non-negative"):
-        should_purge_swap(mem_available_kb=-1, swap_used_kb=100)
-    with pytest.raises(ValueError, match="non-negative"):
-        should_purge_swap(mem_available_kb=100_000, swap_used_kb=-5)
-    with pytest.raises(ValueError, match="non-negative"):
-        should_purge_swap(
-            mem_available_kb=100_000, swap_used_kb=10, safety_margin_kb=-1
-        )
+    # 1) 정상값: Swap 사용 중(100,000KB)이고 가용 RAM(400,000KB)이 충분할 때 -> PURGED
+    assert eval_swap_purge(400_000, 2_097_152, 1_997_152) == "PURGED"
+
+    # 2) 맞지만 헷갈리는 값: 정확히 경계치(SwapUsed 100,000 + 마진 65,536 = 165,536KB)일 때 -> PURGED
+    assert eval_swap_purge(165_536, 2_097_152, 1_997_152) == "PURGED"
+
+    # 3) 일부만 맞는 값: 가용 RAM(120,000KB)이 SwapUsed(100,000KB)보다는 크나 안전 마진 미달일 때 -> SKIPPED
+    assert eval_swap_purge(120_000, 2_097_152, 1_997_152) == "SKIPPED"
+
+    # 4) 완전히 틀린 조건(Swap 미사용 0KB): 가용 RAM이 충분해도 불필요한 swapoff/swapon 실행 안 함 -> SKIPPED
+    assert eval_swap_purge(500_000, 2_097_152, 2_097_152) == "SKIPPED"
