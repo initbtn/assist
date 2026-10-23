@@ -1,7 +1,7 @@
 import pytest
 from langchain_core.documents import Document
 
-from app.rag import FakeMemoryRetriever, QueryResult
+from app.rag import FakeMemoryRetriever
 from app.targets import InMemoryTargetStore
 from app.telegram import handle_telegram_update, send_telegram_message
 
@@ -64,8 +64,12 @@ def test_handle_telegram_update_routes_commands_and_questions():
 
     class StubLLM:
         def generate(self, prompt: str) -> str:
-            if "아침" in prompt or "브리핑" in prompt:
-                return "오늘의 아침 리포트 요약"
+            if "3줄" in prompt or "브리핑" in prompt or "아침" in prompt:
+                return (
+                    "1. Next.js 16 내장 MCP 서버 출시\n"
+                    "2. Cache Components 정식 도입\n"
+                    "3. 풀스택 AI 통합 워크플로 강화"
+                )
             return "Next.js 16은 MCP 서버를 지원합니다."
 
     # 1) /targets 명령
@@ -79,15 +83,19 @@ def test_handle_telegram_update_routes_commands_and_questions():
     assert "ai_agent_llm" in reply_targets
     assert sent_messages[-1][0] == "111"
 
-    # 2) /brief 명령
+    # 2) /brief 명령 -> 3줄 요약 + 아티클 링크 포함
     reply_brief = handle_telegram_update(
         update={"message": {"chat": {"id": 111}, "text": "/brief"}},
         target_store=target_store,
         retriever=retriever,
         llm=StubLLM(),
         sender=fake_sender,
+        base_ui_url="https://assist-brief.vercel.app",
     )
-    assert reply_brief == "오늘의 아침 리포트 요약"
+    assert "1. Next.js 16 내장 MCP 서버 출시" in reply_brief
+    assert "2. Cache Components 정식 도입" in reply_brief
+    assert "3. 풀스택 AI 통합 워크플로 강화" in reply_brief
+    assert "https://assist-brief.vercel.app/articles/" in reply_brief
 
     # 3) 일반 질문 메시지
     reply_q = handle_telegram_update(

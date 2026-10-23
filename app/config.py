@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_webhook_secret: str = ""
+    public_ui_base_url: str = "https://assist-brief.vercel.app"
 
     def resolved_telegram_bot_token(self) -> str:
         if self.telegram_bot_token.strip():

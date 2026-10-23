@@ -1,0 +1,9 @@
+{
+  "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/articles/:slug",
+      "destination": "/article.html?slug=:slug"
+    }
+  ]
+}

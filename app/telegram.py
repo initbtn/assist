@@ -3,7 +3,13 @@ from typing import Any, Callable
 
 import httpx
 
-from app.rag import LLMProtocol, RetrieverProtocol, answer_question, build_morning_brief
+from app.articles import (
+    InMemoryArticleStore,
+    build_briefing_article,
+    format_telegram_brief_message,
+)
+from app.config import settings
+from app.rag import LLMProtocol, RetrieverProtocol, answer_question
 from app.targets import InMemoryTargetStore
 
 
@@ -62,6 +68,8 @@ def handle_telegram_update(
     retriever: RetrieverProtocol,
     llm: LLMProtocol,
     sender: Callable[[str, str], None],
+    article_store: InMemoryArticleStore | None = None,
+    base_ui_url: str | None = None,
 ) -> str:
     message = update.get("message") or {}
     chat = message.get("chat") or {}
@@ -71,11 +79,20 @@ def handle_telegram_update(
     if not chat_id or not text:
         return ""
 
+    ui_url = (base_ui_url or settings.public_ui_base_url).strip()
+
     if text.startswith("/targets"):
         reply = _format_targets_summary(target_store)
     elif text.startswith("/brief"):
         recent_docs = retriever.search("recent", k=20)
-        reply = build_morning_brief(recent_docs, llm=llm)
+        article = build_briefing_article(
+            recent_docs,
+            llm=llm,
+            base_ui_url=ui_url,
+        )
+        if article_store is not None:
+            article_store.save(article)
+        reply = format_telegram_brief_message(article)
     else:
         result = answer_question(text, retriever=retriever, llm=llm)
         if result.sources:
