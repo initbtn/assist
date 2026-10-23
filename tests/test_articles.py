@@ -1,11 +1,13 @@
 import json
 from pathlib import Path
 
+import pytest
 from langchain_core.documents import Document
 
 from app.articles import (
     InMemoryArticleStore,
     build_briefing_article,
+    build_vercel_deployment_payload,
     export_articles_to_web,
     extract_three_line_summary,
     format_telegram_brief_message,
@@ -125,7 +127,7 @@ def test_build_briefing_article_and_format_telegram_message():
     assert "https://assist-brief.vercel.app/articles/2026-10-23" in msg
 
 
-def test_article_store_and_export_to_web(tmp_path: Path):
+def test_article_store_and_export_to_web_and_vercel_payload(tmp_path: Path):
     docs = _sample_docs()
     article = build_briefing_article(
         docs,
@@ -142,14 +144,31 @@ def test_article_store_and_export_to_web(tmp_path: Path):
     assert fetched.slug == "2026-10-23"
     assert len(store.list_articles()) == 1
 
+    # article.html 템플릿이 있을 때 정적 상세 경로 파일(articles/<slug>/index.html)까지 생성하는지 검증
+    (tmp_path / "index.html").write_text("<html>home</html>", encoding="utf-8")
+    (tmp_path / "article.html").write_text("<html>detail</html>", encoding="utf-8")
+    (tmp_path / "vercel.json").write_text("{}", encoding="utf-8")
+
     out_file = export_articles_to_web(store.list_articles(), web_dir=tmp_path)
     assert out_file == tmp_path / "data" / "articles.json"
     assert out_file.exists()
 
+    static_detail = tmp_path / "articles" / "2026-10-23" / "index.html"
+    assert static_detail.exists()
+    assert static_detail.read_text(encoding="utf-8") == "<html>detail</html>"
+
     loaded = json.loads(out_file.read_text(encoding="utf-8"))
     assert len(loaded["articles"]) == 1
     assert loaded["articles"][0]["slug"] == "2026-10-23"
-    assert (
-        loaded["articles"][0]["article_url"]
-        == "https://assist-brief.vercel.app/articles/2026-10-23"
-    )
+
+    payload = build_vercel_deployment_payload(tmp_path, project_name="assist-brief")
+    assert payload["name"] == "assist-brief"
+    assert payload["target"] == "production"
+    file_paths = {f["file"] for f in payload["files"]}
+    assert "index.html" in file_paths
+    assert "article.html" in file_paths
+    assert "data/articles.json" in file_paths
+    assert "articles/2026-10-23/index.html" in file_paths
+
+    with pytest.raises(ValueError, match="web_dir"):
+        build_vercel_deployment_payload(tmp_path / "non-existent")

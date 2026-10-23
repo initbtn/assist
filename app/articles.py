@@ -3,6 +3,7 @@ import re
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 from langchain_core.documents import Document
 from pydantic import BaseModel, Field
@@ -223,7 +224,8 @@ def export_articles_to_web(
     *,
     web_dir: Path,
 ) -> Path:
-    data_dir = Path(web_dir) / "data"
+    root = Path(web_dir)
+    data_dir = root / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     out_file = data_dir / "articles.json"
     payload = {
@@ -233,4 +235,47 @@ def export_articles_to_web(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+
+    template_file = root / "article.html"
+    if template_file.exists():
+        template_html = template_file.read_text(encoding="utf-8")
+        for art in articles:
+            slug_dir = root / "articles" / art.slug
+            slug_dir.mkdir(parents=True, exist_ok=True)
+            (slug_dir / "index.html").write_text(template_html, encoding="utf-8")
+
     return out_file
+
+
+def build_vercel_deployment_payload(
+    web_dir: Path,
+    *,
+    project_name: str = "assist-brief",
+) -> dict[str, Any]:
+    root = Path(web_dir)
+    if not root.exists() or not root.is_dir():
+        raise ValueError(f"web_dir does not exist: {web_dir}")
+
+    files_payload: list[dict[str, str]] = []
+    for path in sorted(root.rglob("*")):
+        if path.is_file():
+            rel = path.relative_to(root).as_posix()
+            files_payload.append(
+                {
+                    "file": rel,
+                    "data": path.read_text(encoding="utf-8"),
+                }
+            )
+
+    return {
+        "name": project_name.strip(),
+        "files": files_payload,
+        "projectSettings": {
+            "framework": None,
+        },
+        "routes": [
+            {"handle": "filesystem"},
+            {"src": "^/articles/([^/]+)$", "dest": "/article.html?slug=$1"},
+        ],
+        "target": "production",
+    }
