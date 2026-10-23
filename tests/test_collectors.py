@@ -6,7 +6,7 @@ from app.collectors import (
     fetch_github_releases,
     seed_initial_knowledge,
 )
-from app.config import resolve_pass_secret
+from app.config import Settings, resolve_pass_secret
 from app.rag import FakeMemoryRetriever
 from app.targets import (
     InMemoryDeduplicationStore,
@@ -156,7 +156,7 @@ def test_seed_initial_knowledge_is_idempotent():
 def test_resolve_pass_secret_uses_first_line_and_handles_errors():
     assert (
         resolve_pass_secret(
-            "telegram/bot-token",
+            "telegram/domAssistBot/bot-token",
             runner=lambda key: "123456:ABCDEF\nextra-metadata\n",
         )
         == "123456:ABCDEF"
@@ -170,6 +170,36 @@ def test_resolve_pass_secret_uses_first_line_and_handles_errors():
     )
     with pytest.raises(ValueError, match="key_path"):
         resolve_pass_secret("   ", runner=lambda key: "val")
+
+
+def test_settings_resolved_telegram_secrets_use_dom_assist_bot_pass_paths(monkeypatch):
+    requested_keys: list[str] = []
+
+    def fake_resolve(key_path: str) -> str:
+        requested_keys.append(key_path)
+        if key_path == "telegram/domAssistBot/bot-token":
+            return "bot-token-from-pass"
+        if key_path == "telegram/domAssistBot/chat-id":
+            return "-100987654321"
+        return ""
+
+    monkeypatch.setattr("app.config.resolve_pass_secret", fake_resolve)
+
+    cfg = Settings(telegram_bot_token="", telegram_chat_id="")
+    assert cfg.resolved_telegram_bot_token() == "bot-token-from-pass"
+    assert cfg.resolved_telegram_chat_id() == "-100987654321"
+    assert requested_keys == [
+        "telegram/domAssistBot/bot-token",
+        "telegram/domAssistBot/chat-id",
+    ]
+
+    explicit_cfg = Settings(
+        telegram_bot_token="  explicit-token  ",
+        telegram_chat_id="  -100111222  ",
+    )
+    assert explicit_cfg.resolved_telegram_bot_token() == "explicit-token"
+    assert explicit_cfg.resolved_telegram_chat_id() == "-100111222"
+    assert len(requested_keys) == 2
 
 
 def test_build_github_headers_includes_bearer_token_when_present():

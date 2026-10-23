@@ -19,7 +19,7 @@
 | **답변 생성 & 다이제스트 LLM** | **Ollama (기본 A: `Google Gemma 3` `gemma3:12b` / 비교 C: `Nous Hermes 3` `hermes3:8b`)** + 선택적 **Claude** | 외부 서버/컨테이너의 오픈소스 LLM(`OLLAMA_BASE_URL`, 기본 `OLLAMA_MODEL_NAME="gemma3:12b"`)을 사용하여 한국어 3줄 요약 및 RAG 답변을 생성하며, `POST /brief/compare`로 모델 A(`gemma3:12b`)와 모델 C(`hermes3:8b`) 요약 결과를 병행 비교 가능 |
 | **브리핑 아티클 웹 UI** | **Vercel (`assist-brief.vercel.app`)** | 일자별 브리핑 1건당 상세 아티클 페이지(`/articles/<slug>`) 및 원문 릴리스 링크 제공 |
 | **알림 & 대화 인터페이스** | **Telegram Bot API (`@DomAssistBot`)** | `제이들` 그룹으로 매일 핵심 3줄 요약 + 상세 아티클 링크 발송(`sendMessage`) 및 양방향 웹훅(`POST /webhook/telegram`) 질의응답 |
-| **시크릿 관리** | **`pass` (Password Store)** | `telegram/bot-token`, `telegram/chat-id`, `github/gh-token`, `vercel.com/token-jsconn`, `supabase/secrets` 등 민감 자격증명을 평문 파일 없이 런타임 주입 |
+| **시크릿 관리** | **`pass` (Password Store)** | `telegram/domAssistBot/bot-token`, `telegram/domAssistBot/chat-id`, `github/gh-token`, `vercel.com/token-jsconn`, `supabase/secrets` 등 민감 자격증명을 평문 파일 없이 런타임 주입 |
 | **배포 & 컨테이너 런타임** | **Docker & Docker Compose (`Dockerfile`, `docker-compose.yml`)** | 로컬 개발 머신에 무거운 모델을 직접 띄우지 않고 별도 서버/컨테이너 환경에서 `assist` API와 `ollama`(`gemma3:12b` / `hermes3:8b`)를 함께 구동 |
 
 ```mermaid
@@ -147,7 +147,7 @@ CREATE TABLE IF NOT EXISTS ingested_sources (
    - **일반 질의응답 (`answer_question`)**: 도메인/타겟 필터링을 지원하는 VectorStore 검색기(Retriever) + 출처(`source_url`) 인용을 강제하는 Claude 프롬프트 체인
    - **아침 리포트 생성 (`build_morning_brief`)**: 최근 적재된 신규 문서들을 도메인별(`ai_agent_llm`, `fullstack_web`, `infra_devops`)로 묶어 핵심 변화·영향도·링크를 요약하는 Digest 생성기
 3. **Telegram 봇(`@DomAssistBot`) 클라이언트 및 웹훅 핸들러 (`tests/test_telegram.py` → `app/telegram.py`)**:
-   - `pass` (`telegram/bot-token`, `telegram/chat-id`, 선택적 `telegram/webhook-secret`) 연동 설정
+   - `pass` (`telegram/domAssistBot/bot-token`, `telegram/domAssistBot/chat-id`, 선택적 `telegram/webhook-secret`) 연동 설정
    - 아웃바운드: `send_morning_brief` (`sendMessage` API 호출)
    - 인바운드 웹훅 명령어 처리:
      - `/brief`: 즉시 아침 브리핑 요약 생성 및 답장
