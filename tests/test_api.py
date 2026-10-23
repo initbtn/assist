@@ -5,8 +5,12 @@ from app.main import create_app
 
 class StubLLM:
     def generate(self, prompt: str) -> str:
-        if "브리핑" in prompt:
-            return "🌅 도메인별 아침 브리핑 요약"
+        if "3줄" in prompt or "브리핑" in prompt:
+            return (
+                "1. AI 에이전트: Claude Code 및 LangChain 최신 릴리스 반영\n"
+                "2. 풀스택 웹: Next.js 16 DevTools MCP 및 Cache Components 도입\n"
+                "3. 인프라: Kubernetes 및 오픈소스 동향 파이프라인 통합"
+            )
         return "요청하신 기술 동향 답변입니다."
 
 
@@ -34,6 +38,7 @@ def test_api_end_to_end_targets_ingest_query_brief_webhook_and_collect():
         github_http_get=fake_github_get,
         webhook_secret="my-secret-token",
         default_chat_id="999888777",
+        base_ui_url="https://assist-brief.vercel.app",
     )
     client = TestClient(app)
 
@@ -111,14 +116,33 @@ def test_api_end_to_end_targets_ingest_query_brief_webhook_and_collect():
     assert res_collect_dup.json()["skipped_duplicates"] == 2
     assert res_collect_dup.json()["seeded_chunks"] == 0
 
-    res_brief = client.post("/brief/send", json={})
+    res_brief = client.post("/brief/send", json={"date_str": "2026-10-23"})
     assert res_brief.status_code == 200
-    assert res_brief.json() == {
-        "sent": True,
-        "chat_id": "999888777",
-        "brief": "🌅 도메인별 아침 브리핑 요약",
-    }
-    assert sent_telegram[-1] == ("999888777", "🌅 도메인별 아침 브리핑 요약")
+    brief_json = res_brief.json()
+    assert brief_json["sent"] is True
+    assert brief_json["chat_id"] == "999888777"
+    assert brief_json["article_slug"] == "2026-10-23"
+    assert (
+        brief_json["article_url"]
+        == "https://assist-brief.vercel.app/articles/2026-10-23"
+    )
+    assert len(brief_json["summary_lines"]) == 3
+    assert "https://assist-brief.vercel.app/articles/2026-10-23" in brief_json["brief"]
+    assert sent_telegram[-1] == ("999888777", brief_json["brief"])
+
+    # 아티클 목록 및 상세 조회 검증
+    res_articles = client.get("/articles")
+    assert res_articles.status_code == 200
+    assert len(res_articles.json()) == 1
+    assert res_articles.json()[0]["slug"] == "2026-10-23"
+
+    res_article_detail = client.get("/articles/2026-10-23")
+    assert res_article_detail.status_code == 200
+    assert res_article_detail.json()["slug"] == "2026-10-23"
+    assert len(res_article_detail.json()["sections"]) >= 1
+
+    res_article_404 = client.get("/articles/non-existent-date")
+    assert res_article_404.status_code == 404
 
     res_forbidden = client.post(
         "/webhook/telegram",

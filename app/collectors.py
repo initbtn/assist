@@ -115,6 +115,7 @@ def collect_and_ingest_targets(
                 metadata={
                     "domain": target.domain,
                     "target_name": target.name,
+                    "title": item.title,
                     "source_url": item.source_url,
                     "source_type": "github_release",
                     "published_at": item.published_at,

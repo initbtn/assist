@@ -3,6 +3,12 @@ from typing import Any, Callable
 from fastapi import FastAPI, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from app.articles import (
+    BriefingArticle,
+    InMemoryArticleStore,
+    build_briefing_article,
+    format_telegram_brief_message,
+)
 from app.collectors import (
     CollectionSummary,
     _default_github_get,
@@ -16,7 +22,6 @@ from app.rag import (
     LLMProtocol,
     QueryResult,
     answer_question,
-    build_morning_brief,
     get_llm,
 )
 from app.targets import (
@@ -60,12 +65,16 @@ class CollectRequest(BaseModel):
 class BriefSendRequest(BaseModel):
     chat_id: str | None = None
     domain: str | None = None
+    date_str: str | None = None
 
 
 class BriefSendResponse(BaseModel):
     sent: bool
     chat_id: str
     brief: str
+    article_slug: str
+    article_url: str
+    summary_lines: list[str]
 
 
 def create_app(
@@ -73,22 +82,30 @@ def create_app(
     target_store: InMemoryTargetStore | None = None,
     dedup_store: InMemoryDeduplicationStore | None = None,
     retriever: FakeMemoryRetriever | None = None,
+    article_store: InMemoryArticleStore | None = None,
     llm: LLMProtocol | None = None,
     telegram_sender: Callable[[str, str], None] | None = None,
     github_http_get: Callable[[str], list[dict[str, Any]]] | None = None,
     webhook_secret: str | None = None,
     default_chat_id: str | None = None,
+    base_ui_url: str | None = None,
 ) -> FastAPI:
     app = FastAPI(title="assist — Personal Dev Trend RAG Assistant")
 
     t_store = target_store if target_store is not None else InMemoryTargetStore(seed=True)
     d_store = dedup_store if dedup_store is not None else InMemoryDeduplicationStore()
     mem_retriever = retriever if retriever is not None else FakeMemoryRetriever()
+    a_store = article_store if article_store is not None else InMemoryArticleStore()
     gh_get = github_http_get if github_http_get is not None else _default_github_get
     expected_secret = (
         webhook_secret
         if webhook_secret is not None
         else settings.telegram_webhook_secret
+    )
+    resolved_ui_url = (
+        base_ui_url.strip()
+        if base_ui_url is not None and base_ui_url.strip()
+        else settings.public_ui_base_url
     )
 
     def _resolve_llm() -> LLMProtocol:
@@ -207,6 +224,20 @@ def create_app(
                 detail=str(exc),
             ) from exc
 
+    @app.get("/articles", response_model=list[BriefingArticle])
+    def list_articles() -> list[BriefingArticle]:
+        return a_store.list_articles()
+
+    @app.get("/articles/{slug}", response_model=BriefingArticle)
+    def get_article(slug: str) -> BriefingArticle:
+        article = a_store.get(slug)
+        if article is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Article not found: {slug}",
+            )
+        return article
+
     @app.post("/brief/send", response_model=BriefSendResponse)
     def send_brief_endpoint(payload: BriefSendRequest) -> BriefSendResponse:
         target_chat = _resolve_chat_id(payload.chat_id)
@@ -216,12 +247,22 @@ def create_app(
                 detail="chat_id is required",
             )
         docs = mem_retriever.search("brief", domain=payload.domain, k=30)
-        brief_text = build_morning_brief(docs, llm=_resolve_llm())
+        article = build_briefing_article(
+            docs,
+            llm=_resolve_llm(),
+            date_str=payload.date_str,
+            base_ui_url=resolved_ui_url,
+        )
+        a_store.save(article)
+        brief_text = format_telegram_brief_message(article)
         _send_telegram(target_chat, brief_text)
         return BriefSendResponse(
             sent=True,
             chat_id=target_chat,
             brief=brief_text,
+            article_slug=article.slug,
+            article_url=article.article_url,
+            summary_lines=article.summary_lines,
         )
 
     @app.post("/webhook/telegram")
@@ -241,6 +282,8 @@ def create_app(
             retriever=mem_retriever,
             llm=_resolve_llm(),
             sender=_send_telegram,
+            article_store=a_store,
+            base_ui_url=resolved_ui_url,
         )
         return {"ok": True, "reply": reply}
 
