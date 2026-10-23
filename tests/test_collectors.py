@@ -1,6 +1,7 @@
 import pytest
 
 from app.collectors import (
+    build_github_headers,
     collect_and_ingest_targets,
     fetch_github_releases,
     seed_initial_knowledge,
@@ -169,3 +170,16 @@ def test_resolve_pass_secret_uses_first_line_and_handles_errors():
     )
     with pytest.raises(ValueError, match="key_path"):
         resolve_pass_secret("   ", runner=lambda key: "val")
+
+
+def test_build_github_headers_includes_bearer_token_when_present():
+    assert build_github_headers("  ghp_test123  ") == {
+        "Accept": "application/vnd.github+json",
+        "Authorization": "Bearer ghp_test123",
+    }
+    assert build_github_headers("   ") == {
+        "Accept": "application/vnd.github+json",
+    }
+    assert build_github_headers(None) == {
+        "Accept": "application/vnd.github+json",
+    }

@@ -20,6 +20,7 @@ from app.ingest import ingest_document
 from app.rag import (
     FakeMemoryRetriever,
     LLMProtocol,
+    PGVectorRetriever,
     QueryResult,
     answer_question,
     get_llm,
@@ -94,7 +95,11 @@ def create_app(
 
     t_store = target_store if target_store is not None else InMemoryTargetStore(seed=True)
     d_store = dedup_store if dedup_store is not None else InMemoryDeduplicationStore()
-    mem_retriever = retriever if retriever is not None else FakeMemoryRetriever()
+    mem_retriever = (
+        retriever
+        if retriever is not None
+        else (PGVectorRetriever() if settings.use_pgvector else FakeMemoryRetriever())
+    )
     a_store = article_store if article_store is not None else InMemoryArticleStore()
     gh_get = github_http_get if github_http_get is not None else _default_github_get
     expected_secret = (
