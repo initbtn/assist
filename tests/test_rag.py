@@ -5,11 +5,13 @@ from langchain_core.documents import Document
 
 from app.config import Settings
 from app.rag import (
+    OLLAMA_MODEL_PRESETS,
     OllamaLLMWrapper,
     PGVectorRetriever,
     answer_question,
     build_morning_brief,
     get_llm,
+    resolve_ollama_model_name,
 )
 
 
@@ -247,3 +249,53 @@ def test_pgvector_retriever_delegates_add_and_metadata_filtered_search():
 
     pg_retriever.search("general query", k=5)
     assert fake_store.search_calls[-1] == ("general query", 5, None)
+
+
+def test_default_settings_use_gemma3_and_snowflake_arctic_embedding():
+    cfg = Settings()
+    assert cfg.ollama_model_name == "gemma3:12b"
+    assert cfg.embedding_model_name == "Snowflake/snowflake-arctic-embed-l-v2.0"
+
+
+def test_resolve_ollama_model_name_and_model_override_four_boundary_cases():
+    # 1) 정상값: 프리셋 A(gemma3:12b) 및 C(hermes3:8b)
+    assert OLLAMA_MODEL_PRESETS == {"A": "gemma3:12b", "C": "hermes3:8b"}
+    assert resolve_ollama_model_name("A") == "gemma3:12b"
+    assert resolve_ollama_model_name("C") == "hermes3:8b"
+
+    # 2) 맞지만 헷갈리는 값: 소문자/공백 포함 프리셋("  a  ", " c ") 및 명시적 모델 태그("  gemma3:27b  ")
+    assert resolve_ollama_model_name("  a  ") == "gemma3:12b"
+    assert resolve_ollama_model_name(" c ") == "hermes3:8b"
+    assert resolve_ollama_model_name("  gemma3:27b  ") == "gemma3:27b"
+
+    # 3) 일부만 맞는 값: 빈 문자열/공백 또는 콜론 뒤 태그가 비어 있는 불완전 태그("gemma3:")
+    with pytest.raises(ValueError, match="model"):
+        resolve_ollama_model_name("   ")
+    with pytest.raises(ValueError, match="model"):
+        resolve_ollama_model_name("gemma3:")
+    with pytest.raises(ValueError, match="model"):
+        resolve_ollama_model_name(":12b")
+
+    # 4) 완전히 틀린 값: 신뢰도 사유로 배제된 중국계 모델 프리셋("B", "qwen3:8b") 요청 거부
+    with pytest.raises(ValueError, match="Excluded"):
+        resolve_ollama_model_name("B")
+    with pytest.raises(ValueError, match="Excluded"):
+        resolve_ollama_model_name("  b  ")
+    with pytest.raises(ValueError, match="Excluded"):
+        resolve_ollama_model_name("qwen3:8b")
+
+    # get_llm(..., model_override="C") 검증
+    calls: list[dict[str, Any]] = []
+
+    def fake_post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        calls.append(payload)
+        return {"response": "Hermes 3 요약"}
+
+    cfg = Settings(ollama_base_url="http://ollama:11434")
+    llm_a = get_llm(cfg, ollama_http_post=fake_post, model_override="A")
+    llm_c = get_llm(cfg, ollama_http_post=fake_post, model_override="C")
+    llm_a.generate("테스트 프롬프트")
+    llm_c.generate("테스트 프롬프트")
+    assert calls[0]["model"] == "gemma3:12b"
+    assert calls[1]["model"] == "hermes3:8b"
+

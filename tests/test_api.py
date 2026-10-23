@@ -159,3 +159,23 @@ def test_api_end_to_end_targets_ingest_query_brief_webhook_and_collect():
     assert res_webhook.status_code == 200
     assert "https://nextjs.org/blog/next-16" in res_webhook.json()["reply"]
     assert sent_telegram[-1][0] == "555"
+
+    # 모델 A(gemma3:12b) vs C(hermes3:8b) 비교 엔드포인트 검증
+    res_compare = client.post(
+        "/brief/compare",
+        json={"models": ["A", "C"], "date_str": "2026-10-23"},
+    )
+    assert res_compare.status_code == 200
+    compare_json = res_compare.json()
+    assert compare_json["date"] == "2026-10-23"
+    assert set(compare_json["comparisons"].keys()) == {"gemma3:12b", "hermes3:8b"}
+    assert len(compare_json["comparisons"]["gemma3:12b"]["summary_lines"]) == 3
+    assert len(compare_json["comparisons"]["hermes3:8b"]["summary_lines"]) == 3
+
+    # 중국계 모델(B) 요청 시 422 거부 검증
+    res_compare_excluded = client.post(
+        "/brief/compare",
+        json={"models": ["B"], "date_str": "2026-10-23"},
+    )
+    assert res_compare_excluded.status_code == 422
+

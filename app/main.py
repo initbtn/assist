@@ -6,7 +6,9 @@ from pydantic import BaseModel, Field
 from app.articles import (
     BriefingArticle,
     InMemoryArticleStore,
+    ModelBriefComparison,
     build_briefing_article,
+    compare_briefing_models,
     format_telegram_brief_message,
 )
 from app.collectors import (
@@ -24,6 +26,7 @@ from app.rag import (
     QueryResult,
     answer_question,
     get_llm,
+    resolve_ollama_model_name,
 )
 from app.targets import (
     InMemoryDeduplicationStore,
@@ -76,6 +79,18 @@ class BriefSendResponse(BaseModel):
     article_slug: str
     article_url: str
     summary_lines: list[str]
+
+
+class BriefCompareRequest(BaseModel):
+    models: list[str] = Field(default_factory=lambda: ["A", "C"])
+    domain: str | None = None
+    date_str: str | None = None
+
+
+class BriefCompareResponse(BaseModel):
+    date: str
+    comparisons: dict[str, ModelBriefComparison]
+
 
 
 def create_app(
@@ -269,6 +284,46 @@ def create_app(
             article_url=article.article_url,
             summary_lines=article.summary_lines,
         )
+
+    @app.post("/brief/compare", response_model=BriefCompareResponse)
+    def compare_brief_endpoint(payload: BriefCompareRequest) -> BriefCompareResponse:
+        if not payload.models:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="models must not be empty",
+            )
+        model_llms: dict[str, LLMProtocol] = {}
+        try:
+            for item in payload.models:
+                resolved_name = resolve_ollama_model_name(item)
+                model_llms[resolved_name] = (
+                    llm
+                    if llm is not None
+                    else get_llm(settings, model_override=resolved_name)
+                )
+            docs = mem_retriever.search("brief", domain=payload.domain, k=30)
+            comparisons = compare_briefing_models(
+                docs,
+                model_llms=model_llms,
+                date_str=payload.date_str,
+                base_ui_url=resolved_ui_url,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+
+        resolved_date = (
+            next(iter(comparisons.values())).article_url.rsplit("/", 1)[-1]
+            if comparisons
+            else (payload.date_str or "")
+        )
+        return BriefCompareResponse(
+            date=resolved_date,
+            comparisons=comparisons,
+        )
+
 
     @app.post("/webhook/telegram")
     def telegram_webhook(
