@@ -20,7 +20,7 @@
 | **브리핑 아티클 웹 UI** | **Vercel (`assist-brief.vercel.app`)** | 일자별 브리핑 1건당 상세 아티클 페이지(`/articles/<slug>`) 및 원문 릴리스 링크 제공 |
 | **알림 & 대화 인터페이스** | **Telegram Bot API (`@DomAssistBot`)** | `제이들` 그룹으로 매일 핵심 3줄 요약 + 상세 아티클 링크 발송(`sendMessage`) 및 양방향 웹훅(`POST /webhook/telegram`) 질의응답 |
 | **시크릿 관리** | **`pass` (Password Store)** | `telegram/domAssistBot/bot-token`, `telegram/domAssistBot/chat-id`, `github/gh-token`, `vercel.com/token-jsconn`, `supabase/secrets` 등 민감 자격증명을 평문 파일 없이 런타임 주입 |
-| **배포 & 컨테이너 런타임** | **Docker & Docker Compose (`Dockerfile`, `docker-compose.yml`)** | 로컬 개발 머신에 무거운 모델을 직접 띄우지 않고 별도 서버/컨테이너 환경에서 `assist` API와 `ollama`(`gemma3:12b` / `hermes3:8b`)를 함께 구동 |
+| **배포 & 컨테이너 런타임** | **GCP `marine-edge-pc` (`e2-micro`, `docker-compose.gcp.yml` `8001` 포트) & Docker Compose (`Dockerfile`, `docker-compose.yml`)** | 로컬 개발 머신에 무거운 모델을 직접 띄우지 않고 GCP `e2-micro`에 경량 `assist-api` 컨테이너(IP 접근제한 방화벽 + 2GB Swap)를 상시 구동하며 외부/Colab GPU의 `ollama`(`gemma3:12b` / `hermes3:8b`)와 연동 |
 
 ```mermaid
 flowchart LR

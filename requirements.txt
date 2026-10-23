@@ -2,13 +2,7 @@ fastapi
 uvicorn[standard]
 pydantic-settings
 httpx
-langchain
-langchain-community
-langchain-postgres
-langchain-huggingface
-langchain-anthropic
-sentence-transformers
-psycopg[binary]
-pgvector
+langchain-core
+langchain-text-splitters
 python-dotenv
 pytest

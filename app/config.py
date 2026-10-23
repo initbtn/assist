@@ -1,7 +1,34 @@
+import ipaddress
 import subprocess
 from typing import Callable
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+TELEGRAM_WEBHOOK_CIDRS: tuple[str, ...] = (
+    "149.154.160.0/20",
+    "91.108.4.0/22",
+)
+
+
+def build_gcp_allowed_source_ranges(
+    admin_ip: str,
+    *,
+    include_telegram_webhooks: bool = True,
+) -> str:
+    cleaned = (admin_ip or "").strip()
+    if not cleaned:
+        raise ValueError("admin_ip must not be empty")
+    try:
+        net = ipaddress.IPv4Network(cleaned, strict=False)
+    except Exception as exc:
+        raise ValueError(f"Invalid admin_ip '{cleaned}'") from exc
+    if net.prefixlen == 0:
+        raise ValueError("0.0.0.0/0 is not permitted for restricted GCP firewall")
+
+    ranges = [str(net)]
+    if include_telegram_webhooks:
+        ranges.extend(TELEGRAM_WEBHOOK_CIDRS)
+    return ",".join(ranges)
 
 
 def _default_pass_runner(key_path: str) -> str:
