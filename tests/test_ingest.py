@@ -2,6 +2,7 @@ import pytest
 from langchain_core.documents import Document
 
 from app.ingest import ingest_document
+from app.targets import InMemoryDeduplicationStore
 
 
 class FakeVectorStore:
@@ -91,3 +92,43 @@ def test_ingest_document_invalid_chunk_params_raises_before_storing():
         )
 
     assert store.calls == []
+
+
+def test_ingest_document_skips_duplicate_source_and_allows_updated_content():
+    store = FakeVectorStore()
+    dedup = InMemoryDeduplicationStore()
+    meta = {
+        "domain": "fullstack_web",
+        "target_name": "Next.js",
+        "source_url": "https://nextjs.org/blog/next-16",
+    }
+
+    first_count = ingest_document(
+        text="Next.js 16 adds Cache Components.",
+        metadata=meta,
+        vector_store=store,
+        dedup_store=dedup,
+        chunk_size=100,
+        chunk_overlap=10,
+    )
+    duplicate_count = ingest_document(
+        text="  Next.js 16   adds Cache Components. \n",
+        metadata=meta,
+        vector_store=store,
+        dedup_store=dedup,
+        chunk_size=100,
+        chunk_overlap=10,
+    )
+    updated_count = ingest_document(
+        text="Next.js 16.3 adds native Rust React Compiler.",
+        metadata=meta,
+        vector_store=store,
+        dedup_store=dedup,
+        chunk_size=100,
+        chunk_overlap=10,
+    )
+
+    assert first_count == 1
+    assert duplicate_count == 0
+    assert updated_count == 1
+    assert len(store.calls) == 2
