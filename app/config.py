@@ -42,14 +42,24 @@ class Settings(BaseSettings):
     )
 
     supabase_db_url: str = "postgresql+psycopg://postgres:postgres@localhost:54322/postgres"
+    use_pgvector: bool = False
+    llm_provider: str = "ollama"
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model_name: str = "hermes3:8b"
     anthropic_api_key: str = ""
     llm_model_name: str = "claude-sonnet-4-5"
     embedding_model_name: str = "BAAI/bge-m3"
     vector_collection_name: str = "tech_trends"
+    github_token: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_webhook_secret: str = ""
     public_ui_base_url: str = "https://assist-brief.vercel.app"
+
+    def resolved_github_token(self) -> str:
+        if self.github_token.strip():
+            return self.github_token.strip()
+        return resolve_pass_secret("github/gh-token")
 
     def resolved_telegram_bot_token(self) -> str:
         if self.telegram_bot_token.strip():

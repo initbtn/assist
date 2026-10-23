@@ -13,13 +13,14 @@
 | 계층 | 선택 기술 | 선정 사유 |
 |---|---|---|
 | **API 게이트웨이 & 런타임** | Python 3.12 + **FastAPI** (`uvicorn`) | LangChain/임베딩 코어가 Python 런타임을 사용하므로 별도 Node 게이트웨이 없이 단일 런타임으로 운영 복잡도 최소화 |
-| **RAG 오케스트레이션** | **LangChain (Python)** | 문서 분할, 벡터 스토어(`langchain-postgres`), 로컬 임베딩(`langchain-huggingface`), LLM(`langchain-anthropic`) 통합 성숙도 최고 |
-| **관계형 & 벡터 DB** | **Supabase (PostgreSQL + `pgvector`)** | 동적 리서치 타겟 테이블(`research_targets`), 수집 중복 방지(`ingested_sources`), 벡터 임베딩/메타데이터 검색을 단일 DB에서 일관되게 처리 |
-| **임베딩 모델** | **`BAAI/bge-m3`** (`sentence-transformers`) | API 키/비용 없이 로컬에서 구동 가능하며, 한국어·영어 다국어 검색 성능 및 생태계 안정성이 검증된 오픈소스 모델 |
-| **답변 생성 & 다이제스트 LLM** | **Claude** (`langchain-anthropic`) | 수집된 기술 문서·릴리스 노트의 맥락 합성, 아침 브리핑 다이제스트 요약 및 출처 기반 근거 응답에 최적화 |
-| **알림 & 대화 인터페이스** | **Telegram Bot API (`@DomAssistBot`)** | 별도 웹 프론트엔드 구축 전에도 모바일/데스크톱에서 즉시 아침 리포트 수신(`sendMessage`) 및 양방향 웹훅(`POST /webhook/telegram`) 질의응답 가능 |
-| **시크릿 관리** | **`pass` (Password Store)** | `telegram/bot-token`, `telegram/chat-id`, `supabase/secrets` 등 민감 자격증명을 평문 파일 없이 런타임 주입 |
-| **원본 스토리지 (확장)** | **Cloudflare R2** (S3 호환) | 대용량 원본 문서·아카이브 스냅샷 보관용 (벡터 검색은 Supabase `pgvector`가 전담) |
+| **RAG 오케스트레이션** | **LangChain (Python)** | 문서 분할, 벡터 스토어(`langchain-postgres`), 로컬 임베딩(`langchain-huggingface`), 오픈소스/상용 LLM 통합 성숙도 최고 |
+| **관계형 & 벡터 DB** | **Supabase (PostgreSQL + `pgvector`)** | 동적 리서치 타겟 테이블(`research_targets`), 수집 중복 방지(`ingested_sources`), 벡터 임베딩/메타데이터 검색(`PGVectorRetriever`)을 단일 DB에서 일관되게 처리 |
+| **임베딩 모델** | **`BAAI/bge-m3`** (`sentence-transformers`) | API 키/비용 없이 구동 가능하며, 한국어·영어 다국어 검색 성능 및 생태계 안정성이 검증된 오픈소스 모델 |
+| **답변 생성 & 다이제스트 LLM** | **Ollama (`Nous Hermes 3` / `Llama`, 기본 `hermes3:8b`)** + 선택적 **Claude** | 외부 서버/컨테이너의 오픈소스 LLM(`OLLAMA_BASE_URL`, `OLLAMA_MODEL_NAME="hermes3:8b"`)을 기본(`LLM_PROVIDER="ollama"`)으로 사용하여 API 비용 없이 3줄 요약 및 RAG 답변을 생성하며, 필요 시 `LLM_PROVIDER="anthropic"`으로 전환 가능 |
+| **브리핑 아티클 웹 UI** | **Vercel (`assist-brief.vercel.app`)** | 일자별 브리핑 1건당 상세 아티클 페이지(`/articles/<slug>`) 및 원문 릴리스 링크 제공 |
+| **알림 & 대화 인터페이스** | **Telegram Bot API (`@DomAssistBot`)** | `제이들` 그룹으로 매일 핵심 3줄 요약 + 상세 아티클 링크 발송(`sendMessage`) 및 양방향 웹훅(`POST /webhook/telegram`) 질의응답 |
+| **시크릿 관리** | **`pass` (Password Store)** | `telegram/bot-token`, `telegram/chat-id`, `github/gh-token`, `vercel.com/token-jsconn`, `supabase/secrets` 등 민감 자격증명을 평문 파일 없이 런타임 주입 |
+| **배포 & 컨테이너 런타임** | **Docker & Docker Compose (`Dockerfile`, `docker-compose.yml`)** | 로컬 개발 머신에 무거운 모델을 직접 띄우지 않고 별도 서버/컨테이너 환경에서 `assist` API와 `ollama`(`hermes3:8b`)를 함께 구동 |
 
 ```mermaid
 flowchart LR

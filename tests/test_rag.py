@@ -1,8 +1,16 @@
+from typing import Any
+
 import pytest
 from langchain_core.documents import Document
 
 from app.config import Settings
-from app.rag import answer_question, build_morning_brief, get_llm
+from app.rag import (
+    OllamaLLMWrapper,
+    PGVectorRetriever,
+    answer_question,
+    build_morning_brief,
+    get_llm,
+)
 
 
 class FakeRetriever:
@@ -143,7 +151,99 @@ def test_build_morning_brief_groups_by_domain_and_handles_empty():
     assert empty_llm.prompts == []
 
 
-def test_get_llm_fails_fast_when_anthropic_api_key_missing():
-    cfg = Settings(anthropic_api_key="   ")
+def test_ollama_llm_wrapper_and_get_llm_four_boundary_cases():
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        calls.append((url, payload))
+        return {"response": "1. AI 요약\n2. 웹 요약\n3. 인프라 요약"}
+
+    # 1) 정상값: 기본 ollama provider (hermes3:8b)
+    cfg_normal = Settings(
+        llm_provider="ollama",
+        ollama_base_url="http://ollama-server:11434/",
+        ollama_model_name="hermes3:8b",
+    )
+    llm_inst = get_llm(cfg_normal, ollama_http_post=fake_post)
+    assert isinstance(llm_inst, OllamaLLMWrapper)
+    out = llm_inst.generate("오늘 동향 3줄 요약")
+    assert out == "1. AI 요약\n2. 웹 요약\n3. 인프라 요약"
+    assert calls == [
+        (
+            "http://ollama-server:11434/api/generate",
+            {
+                "model": "hermes3:8b",
+                "prompt": "오늘 동향 3줄 요약",
+                "stream": False,
+            },
+        )
+    ]
+
+    # 2) 맞지만 헷갈리는 값: 대소문자 및 앞뒤 공백 포함 ("  OLLAMA  ")
+    cfg_confusing = Settings(
+        llm_provider="  OLLAMA  ",
+        ollama_base_url="http://10.0.0.5:11434",
+        ollama_model_name="llama3.3:8b",
+    )
+    llm_confusing = get_llm(cfg_confusing, ollama_http_post=fake_post)
+    assert isinstance(llm_confusing, OllamaLLMWrapper)
+
+    # 3) 일부만 맞는 값: provider는 ollama인데 base_url 또는 model_name이 비어 있음 / 빈 프롬프트
+    with pytest.raises(ValueError, match="OLLAMA_BASE_URL"):
+        get_llm(Settings(llm_provider="ollama", ollama_base_url="   "))
+    with pytest.raises(ValueError, match="OLLAMA_MODEL_NAME"):
+        get_llm(Settings(llm_provider="ollama", ollama_model_name="   "))
+    with pytest.raises(ValueError, match="prompt"):
+        llm_inst.generate("   ")
+
+    # 4) 완전히 틀린 값: 지원하지 않는 provider 또는 anthropic 키 누락
+    with pytest.raises(ValueError, match="Unsupported llm_provider"):
+        get_llm(Settings(llm_provider="unknown_provider"))
     with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
-        get_llm(cfg)
+        get_llm(Settings(llm_provider="anthropic", anthropic_api_key="   "))
+
+
+def test_pgvector_retriever_delegates_add_and_metadata_filtered_search():
+    class FakePGVectorStore:
+        def __init__(self) -> None:
+            self.added: list[Document] = []
+            self.search_calls: list[tuple[str, int, dict[str, Any] | None]] = []
+
+        def add_documents(self, documents: list[Document]) -> list[str]:
+            self.added.extend(documents)
+            return [f"id-{i}" for i in range(len(documents))]
+
+        def similarity_search(
+            self,
+            query: str,
+            k: int = 4,
+            filter: dict[str, Any] | None = None,
+        ) -> list[Document]:
+            self.search_calls.append((query, k, filter))
+            return self.added[:k]
+
+    fake_store = FakePGVectorStore()
+    pg_retriever = PGVectorRetriever(vector_store=fake_store)
+
+    doc = Document(
+        page_content="Hermes 3 supports structured tool calling.",
+        metadata={"domain": "ai_agent_llm", "target_name": "Hermes"},
+    )
+    ids = pg_retriever.add_documents([doc])
+    assert ids == ["id-0"]
+
+    res_filtered = pg_retriever.search(
+        "Hermes tool calling",
+        domain="ai_agent_llm",
+        target_name="Hermes",
+        k=3,
+    )
+    assert len(res_filtered) == 1
+    assert fake_store.search_calls[-1] == (
+        "Hermes tool calling",
+        3,
+        {"domain": "ai_agent_llm", "target_name": "Hermes"},
+    )
+
+    pg_retriever.search("general query", k=5)
+    assert fake_store.search_calls[-1] == ("general query", 5, None)

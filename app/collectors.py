@@ -3,8 +3,18 @@ from typing import Any, Callable
 import httpx
 from pydantic import BaseModel
 
+from app.config import settings
 from app.ingest import VectorStoreProtocol, ingest_document
 from app.targets import DeduplicationStoreProtocol, InMemoryTargetStore
+
+
+def build_github_headers(token: str | None = None) -> dict[str, str]:
+    headers: dict[str, str] = {"Accept": "application/vnd.github+json"}
+    cleaned = (token or "").strip()
+    if cleaned:
+        headers["Authorization"] = f"Bearer {cleaned}"
+    return headers
+
 
 
 class CollectedItem(BaseModel):
@@ -26,7 +36,7 @@ class CollectionSummary(BaseModel):
 def _default_github_get(url: str) -> list[dict[str, Any]]:
     resp = httpx.get(
         url,
-        headers={"Accept": "application/vnd.github+json"},
+        headers=build_github_headers(settings.resolved_github_token()),
         timeout=15.0,
     )
     resp.raise_for_status()
