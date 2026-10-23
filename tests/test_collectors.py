@@ -6,7 +6,11 @@ from app.collectors import (
     fetch_github_releases,
     seed_initial_knowledge,
 )
-from app.config import Settings, resolve_pass_secret
+from app.config import (
+    Settings,
+    build_gcp_allowed_source_ranges,
+    resolve_pass_secret,
+)
 from app.rag import FakeMemoryRetriever
 from app.targets import (
     InMemoryDeduplicationStore,
@@ -213,3 +217,43 @@ def test_build_github_headers_includes_bearer_token_when_present():
     assert build_github_headers(None) == {
         "Accept": "application/vnd.github+json",
     }
+
+
+def test_build_gcp_allowed_source_ranges_four_boundary_cases():
+    # 1) 정상값: 단일 공인 IPv4 -> /32 정규화 + Telegram 웹훅 CIDR 결합
+    assert (
+        build_gcp_allowed_source_ranges("39.113.59.152")
+        == "39.113.59.152/32,149.154.160.0/20,91.108.4.0/22"
+    )
+    assert (
+        build_gcp_allowed_source_ranges(
+            "39.113.59.152", include_telegram_webhooks=False
+        )
+        == "39.113.59.152/32"
+    )
+
+    # 2) 맞지만 헷갈리는 값: 앞뒤 공백 및 이미 /32 또는 서브넷이 붙은 CIDR 입력
+    assert (
+        build_gcp_allowed_source_ranges("  39.113.59.152/32  ")
+        == "39.113.59.152/32,149.154.160.0/20,91.108.4.0/22"
+    )
+    assert (
+        build_gcp_allowed_source_ranges(
+            " 203.0.113.0/24 ", include_telegram_webhooks=False
+        )
+        == "203.0.113.0/24"
+    )
+
+    # 3) 일부만 맞는 값: 절단된 IP("39.113.59."), 슬래시 뒤 프리픽스 누락("39.113.59.152/"), 공백 문자열
+    with pytest.raises(ValueError, match="admin_ip"):
+        build_gcp_allowed_source_ranges("39.113.59.")
+    with pytest.raises(ValueError, match="admin_ip"):
+        build_gcp_allowed_source_ranges("39.113.59.152/")
+    with pytest.raises(ValueError, match="admin_ip"):
+        build_gcp_allowed_source_ranges("   ")
+
+    # 4) 완전히 틀린 값: 0.0.0.0/0 전체 개방(보안 정책 위반) 또는 숫자가 아닌 임의 문자열
+    with pytest.raises(ValueError, match="0.0.0.0/0"):
+        build_gcp_allowed_source_ranges("0.0.0.0/0")
+    with pytest.raises(ValueError, match="admin_ip"):
+        build_gcp_allowed_source_ranges("not-an-ip-address")

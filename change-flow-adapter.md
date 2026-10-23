@@ -19,5 +19,5 @@
 | **PR(⑥)** | 템플릿 [.github/PULL_REQUEST_TEMPLATE.md](./.github/PULL_REQUEST_TEMPLATE.md), `closes #N` |
 | **merge 모델(⑧)** | **squash-only** (`--squash --delete-branch`, 단독 owner, 사용자 명시 위임 시만) |
 | **cleanup(⑨)** | `git worktree remove` + 로컬 브랜치 `-D` (`~/projects/domstack/docs/worktree-cleanup.md` 정본 준수) |
-| **배포(⑩)** | 로컬/컨테이너 실행 및 Supabase 스키마 마이그레이션 (`deploy-run` 게이트 준수) |
+| **배포(⑩)** | GCP `marine-edge-pc`(`us-central1-a`, `8001` 포트) 경량 컨테이너 배포 (`./scripts/deploy-gcp.sh`, `deploy-run` 게이트 준수) |
 | **warming** | pass·gpg (`DOMSTACK_WARMING` on) |

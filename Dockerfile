@@ -5,8 +5,14 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+ARG INSTALL_EMBEDDINGS=false
+
+COPY requirements.txt requirements-embeddings.txt ./
+RUN if [ "$INSTALL_EMBEDDINGS" = "true" ]; then \
+        pip install --no-cache-dir -r requirements-embeddings.txt; \
+    else \
+        pip install --no-cache-dir -r requirements.txt; \
+    fi
 
 COPY app ./app
 COPY web ./web
