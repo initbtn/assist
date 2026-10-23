@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>상세 기술 동향 아티클 — assist</title>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --surface: #131b2e;
+      --surface-alt: #172138;
+      --border: #263354;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-soft: rgba(56, 189, 248, 0.14);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+    }
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 36px 20px 80px;
+    }
+    .back-link {
+      display: inline-block;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.92rem;
+      font-weight: 600;
+      margin-bottom: 24px;
+    }
+    .back-link:hover { text-decoration: underline; }
+    .article-header {
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 22px;
+      margin-bottom: 26px;
+    }
+    .date-tag {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-bottom: 8px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.85rem;
+      letter-spacing: -0.02em;
+    }
+    .summary-box {
+      background: var(--surface-alt);
+      border: 1px solid var(--accent);
+      border-radius: 14px;
+      padding: 20px 24px;
+      margin-bottom: 34px;
+    }
+    .summary-box h2 {
+      margin: 0 0 12px;
+      font-size: 1.05rem;
+      color: var(--accent);
+    }
+    .summary-box ol {
+      margin: 0;
+      padding-left: 20px;
+    }
+    .summary-box li {
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+    .domain-section {
+      margin-bottom: 36px;
+    }
+    .domain-title {
+      font-size: 1.25rem;
+      margin: 0 0 16px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+      color: #f8fafc;
+    }
+    .item-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 14px;
+    }
+    .item-header {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .target-badge {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--accent);
+      background: var(--accent-soft);
+      padding: 3px 10px;
+      border-radius: 999px;
+    }
+    .item-title {
+      margin: 0;
+      font-size: 1.1rem;
+    }
+    .item-summary {
+      margin: 0 0 14px;
+      color: #cbd5e1;
+      font-size: 0.95rem;
+      white-space: pre-line;
+    }
+    .source-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-decoration: none;
+      padding: 6px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.02);
+    }
+    .source-btn:hover {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a class="back-link" href="/">← 전체 일일 브리핑 목록</a>
+    <div id="article-root">
+      <p style="color: var(--muted);">상세 아티클을 불러오는 중입니다...</p>
+    </div>
+  </div>
+  <script>
+    function resolveSlug() {
+      const params = new URLSearchParams(window.location.search);
+      const querySlug = params.get("slug");
+      if (querySlug) return querySlug.trim();
+      const parts = window.location.pathname.split("/").filter(Boolean);
+      if (parts.length >= 2 && parts[0] === "articles") {
+        return decodeURIComponent(parts[1]);
+      }
+      return "";
+    }
+
+    async function loadArticleDetail() {
+      const root = document.getElementById("article-root");
+      const slug = resolveSlug();
+      try {
+        const res = await fetch("/data/articles.json");
+        const data = await res.json();
+        const articles = data.articles || [];
+        const article = slug
+          ? articles.find((a) => a.slug === slug)
+          : articles[0];
+
+        root.textContent = "";
+        if (!article) {
+          const msg = document.createElement("p");
+          msg.textContent = `요청하신 브리핑 아티클(${slug})을 찾을 수 없습니다.`;
+          root.appendChild(msg);
+          return;
+        }
+
+        document.title = `${article.title} — assist`;
+
+        const header = document.createElement("header");
+        header.className = "article-header";
+        const dateDiv = document.createElement("div");
+        dateDiv.className = "date-tag";
+        dateDiv.textContent = `📅 발행일: ${article.date}`;
+        const h1 = document.createElement("h1");
+        h1.textContent = article.title;
+        header.appendChild(dateDiv);
+        header.appendChild(h1);
+        root.appendChild(header);
+
+        const summaryBox = document.createElement("section");
+        summaryBox.className = "summary-box";
+        const sumH2 = document.createElement("h2");
+        sumH2.textContent = "⚡ 오늘의 핵심 동향 3줄 요약";
+        const ol = document.createElement("ol");
+        (article.summary_lines || []).slice(0, 3).forEach((line) => {
+          const li = document.createElement("li");
+          li.textContent = line;
+          ol.appendChild(li);
+        });
+        summaryBox.appendChild(sumH2);
+        summaryBox.appendChild(ol);
+        root.appendChild(summaryBox);
+
+        (article.sections || []).forEach((sec) => {
+          const secEl = document.createElement("section");
+          secEl.className = "domain-section";
+
+          const secTitle = document.createElement("h2");
+          secTitle.className = "domain-title";
+          secTitle.textContent = `📂 ${sec.domain_label}`;
+          secEl.appendChild(secTitle);
+
+          (sec.items || []).forEach((item) => {
+            const card = document.createElement("article");
+            card.className = "item-card";
+
+            const itemHeader = document.createElement("div");
+            itemHeader.className = "item-header";
+            const badge = document.createElement("span");
+            badge.className = "target-badge";
+            badge.textContent = item.target_name;
+            const itemTitle = document.createElement("h3");
+            itemTitle.className = "item-title";
+            itemTitle.textContent = item.title;
+            itemHeader.appendChild(badge);
+            itemHeader.appendChild(itemTitle);
+            card.appendChild(itemHeader);
+
+            const p = document.createElement("p");
+            p.className = "item-summary";
+            p.textContent = item.summary;
+            card.appendChild(p);
+
+            if (item.source_url && /^https?:\/\//i.test(item.source_url)) {
+              const a = document.createElement("a");
+              a.className = "source-btn";
+              a.href = item.source_url;
+              a.target = "_blank";
+              a.rel = "noopener noreferrer";
+              a.textContent = "🔗 원문 아티클 / 릴리스 이동 ↗";
+              card.appendChild(a);
+            }
+
+            secEl.appendChild(card);
+          });
+
+          root.appendChild(secEl);
+        });
+      } catch (err) {
+        root.textContent = "상세 아티클을 불러오는 중 오류가 발생했습니다.";
+      }
+    }
+    loadArticleDetail();
+  </script>
+</body>
+</html>
