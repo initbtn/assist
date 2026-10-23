@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+pydantic-settings
+langchain
+langchain-community
+langchain-postgres
+langchain-huggingface
+langchain-anthropic
+sentence-transformers
+psycopg[binary]
+pgvector
+python-dotenv
+pytest
