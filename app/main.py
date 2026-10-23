@@ -1,0 +1,214 @@
+from typing import Any, Callable
+
+from fastapi import FastAPI, Header, HTTPException, Query, status
+from pydantic import BaseModel, Field
+
+from app.config import settings
+from app.ingest import ingest_document
+from app.rag import (
+    FakeMemoryRetriever,
+    LLMProtocol,
+    QueryResult,
+    answer_question,
+    build_morning_brief,
+    get_llm,
+)
+from app.targets import (
+    InMemoryDeduplicationStore,
+    InMemoryTargetStore,
+    ResearchTarget,
+    ResearchTargetCreate,
+)
+from app.telegram import handle_telegram_update, send_telegram_message
+
+
+class TargetStatusPatch(BaseModel):
+    is_active: bool
+
+
+class IngestRequest(BaseModel):
+    text: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    chunk_size: int = 1000
+    chunk_overlap: int = 200
+
+
+class IngestResponse(BaseModel):
+    ingested_chunks: int
+    skipped_duplicate: bool
+
+
+class QueryRequest(BaseModel):
+    question: str
+    domain: str | None = None
+    target_name: str | None = None
+    k: int = 4
+
+
+class BriefSendRequest(BaseModel):
+    chat_id: str | None = None
+    domain: str | None = None
+
+
+class BriefSendResponse(BaseModel):
+    sent: bool
+    chat_id: str
+    brief: str
+
+
+def create_app(
+    *,
+    target_store: InMemoryTargetStore | None = None,
+    dedup_store: InMemoryDeduplicationStore | None = None,
+    retriever: FakeMemoryRetriever | None = None,
+    llm: LLMProtocol | None = None,
+    telegram_sender: Callable[[str, str], None] | None = None,
+    webhook_secret: str | None = None,
+    default_chat_id: str | None = None,
+) -> FastAPI:
+    app = FastAPI(title="assist — Personal Dev Trend RAG Assistant")
+
+    t_store = target_store if target_store is not None else InMemoryTargetStore(seed=True)
+    d_store = dedup_store if dedup_store is not None else InMemoryDeduplicationStore()
+    mem_retriever = retriever if retriever is not None else FakeMemoryRetriever()
+    expected_secret = (
+        webhook_secret
+        if webhook_secret is not None
+        else settings.telegram_webhook_secret
+    )
+    fallback_chat_id = (
+        default_chat_id if default_chat_id is not None else settings.telegram_chat_id
+    )
+
+    def _resolve_llm() -> LLMProtocol:
+        return llm if llm is not None else get_llm(settings)
+
+    def _send_telegram(chat_id: str, text: str) -> None:
+        if telegram_sender is not None:
+            telegram_sender(chat_id, text)
+            return
+        send_telegram_message(
+            text=text,
+            bot_token=settings.telegram_bot_token,
+            chat_id=chat_id,
+        )
+
+    @app.get("/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/targets", response_model=list[ResearchTarget])
+    def list_targets(
+        domain: str | None = Query(default=None),
+        active_only: bool = Query(default=True),
+    ) -> list[ResearchTarget]:
+        return t_store.list_targets(domain=domain, active_only=active_only)
+
+    @app.post(
+        "/targets",
+        response_model=ResearchTarget,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_target(payload: ResearchTargetCreate) -> ResearchTarget:
+        try:
+            return t_store.add_target(payload)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
+
+    @app.patch("/targets/{target_id}", response_model=ResearchTarget)
+    def patch_target(
+        target_id: str,
+        payload: TargetStatusPatch,
+    ) -> ResearchTarget:
+        try:
+            return t_store.set_active(target_id, is_active=payload.is_active)
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(exc),
+            ) from exc
+
+    @app.post("/ingest", response_model=IngestResponse)
+    def ingest_endpoint(payload: IngestRequest) -> IngestResponse:
+        try:
+            count = ingest_document(
+                text=payload.text,
+                metadata=payload.metadata,
+                vector_store=mem_retriever,
+                dedup_store=d_store,
+                chunk_size=payload.chunk_size,
+                chunk_overlap=payload.chunk_overlap,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+
+        skipped = count == 0 and bool(payload.text.strip())
+        return IngestResponse(
+            ingested_chunks=count,
+            skipped_duplicate=skipped,
+        )
+
+    @app.post("/query", response_model=QueryResult)
+    def query_endpoint(payload: QueryRequest) -> QueryResult:
+        try:
+            return answer_question(
+                payload.question,
+                retriever=mem_retriever,
+                llm=_resolve_llm(),
+                domain=payload.domain,
+                target_name=payload.target_name,
+                k=payload.k,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+
+    @app.post("/brief/send", response_model=BriefSendResponse)
+    def send_brief_endpoint(payload: BriefSendRequest) -> BriefSendResponse:
+        target_chat = (payload.chat_id or fallback_chat_id or "").strip()
+        if not target_chat:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="chat_id is required",
+            )
+        docs = mem_retriever.search("brief", domain=payload.domain, k=30)
+        brief_text = build_morning_brief(docs, llm=_resolve_llm())
+        _send_telegram(target_chat, brief_text)
+        return BriefSendResponse(
+            sent=True,
+            chat_id=target_chat,
+            brief=brief_text,
+        )
+
+    @app.post("/webhook/telegram")
+    def telegram_webhook(
+        update: dict[str, Any],
+        x_telegram_bot_api_secret_token: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        if expected_secret and x_telegram_bot_api_secret_token != expected_secret:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid webhook secret token",
+            )
+
+        reply = handle_telegram_update(
+            update,
+            target_store=t_store,
+            retriever=mem_retriever,
+            llm=_resolve_llm(),
+            sender=_send_telegram,
+        )
+        return {"ok": True, "reply": reply}
+
+    return app
+
+
+app = create_app()
