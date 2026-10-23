@@ -3,6 +3,12 @@ from typing import Any, Callable
 from fastapi import FastAPI, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from app.collectors import (
+    CollectionSummary,
+    _default_github_get,
+    collect_and_ingest_targets,
+    seed_initial_knowledge,
+)
 from app.config import settings
 from app.ingest import ingest_document
 from app.rag import (
@@ -45,6 +51,12 @@ class QueryRequest(BaseModel):
     k: int = 4
 
 
+class CollectRequest(BaseModel):
+    domain: str | None = None
+    include_seed: bool = False
+    per_target_limit: int = 3
+
+
 class BriefSendRequest(BaseModel):
     chat_id: str | None = None
     domain: str | None = None
@@ -63,6 +75,7 @@ def create_app(
     retriever: FakeMemoryRetriever | None = None,
     llm: LLMProtocol | None = None,
     telegram_sender: Callable[[str, str], None] | None = None,
+    github_http_get: Callable[[str], list[dict[str, Any]]] | None = None,
     webhook_secret: str | None = None,
     default_chat_id: str | None = None,
 ) -> FastAPI:
@@ -71,17 +84,22 @@ def create_app(
     t_store = target_store if target_store is not None else InMemoryTargetStore(seed=True)
     d_store = dedup_store if dedup_store is not None else InMemoryDeduplicationStore()
     mem_retriever = retriever if retriever is not None else FakeMemoryRetriever()
+    gh_get = github_http_get if github_http_get is not None else _default_github_get
     expected_secret = (
         webhook_secret
         if webhook_secret is not None
         else settings.telegram_webhook_secret
     )
-    fallback_chat_id = (
-        default_chat_id if default_chat_id is not None else settings.telegram_chat_id
-    )
 
     def _resolve_llm() -> LLMProtocol:
         return llm if llm is not None else get_llm(settings)
+
+    def _resolve_chat_id(explicit_chat_id: str | None = None) -> str:
+        if explicit_chat_id and explicit_chat_id.strip():
+            return explicit_chat_id.strip()
+        if default_chat_id is not None and default_chat_id.strip():
+            return default_chat_id.strip()
+        return settings.resolved_telegram_chat_id()
 
     def _send_telegram(chat_id: str, text: str) -> None:
         if telegram_sender is not None:
@@ -89,7 +107,7 @@ def create_app(
             return
         send_telegram_message(
             text=text,
-            bot_token=settings.telegram_bot_token,
+            bot_token=settings.resolved_telegram_bot_token(),
             chat_id=chat_id,
         )
 
@@ -154,6 +172,24 @@ def create_app(
             skipped_duplicate=skipped,
         )
 
+    @app.post("/collect", response_model=CollectionSummary)
+    def collect_endpoint(payload: CollectRequest) -> CollectionSummary:
+        seeded = 0
+        if payload.include_seed:
+            seeded = seed_initial_knowledge(
+                vector_store=mem_retriever,
+                dedup_store=d_store,
+            )
+        summary = collect_and_ingest_targets(
+            target_store=t_store,
+            vector_store=mem_retriever,
+            dedup_store=d_store,
+            http_get=gh_get,
+            domain=payload.domain,
+            per_target_limit=payload.per_target_limit,
+        )
+        return summary.model_copy(update={"seeded_chunks": seeded})
+
     @app.post("/query", response_model=QueryResult)
     def query_endpoint(payload: QueryRequest) -> QueryResult:
         try:
@@ -173,7 +209,7 @@ def create_app(
 
     @app.post("/brief/send", response_model=BriefSendResponse)
     def send_brief_endpoint(payload: BriefSendRequest) -> BriefSendResponse:
-        target_chat = (payload.chat_id or fallback_chat_id or "").strip()
+        target_chat = _resolve_chat_id(payload.chat_id)
         if not target_chat:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

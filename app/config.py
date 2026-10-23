@@ -1,4 +1,37 @@
+import subprocess
+from typing import Callable
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _default_pass_runner(key_path: str) -> str:
+    proc = subprocess.run(
+        ["pass", "show", key_path],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    return proc.stdout
+
+
+def resolve_pass_secret(
+    key_path: str,
+    *,
+    runner: Callable[[str], str] = _default_pass_runner,
+) -> str:
+    cleaned_key = key_path.strip()
+    if not cleaned_key:
+        raise ValueError("key_path must not be empty")
+    try:
+        raw = runner(cleaned_key)
+    except Exception:
+        return ""
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
 
 
 class Settings(BaseSettings):
@@ -16,6 +49,16 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_webhook_secret: str = ""
+
+    def resolved_telegram_bot_token(self) -> str:
+        if self.telegram_bot_token.strip():
+            return self.telegram_bot_token.strip()
+        return resolve_pass_secret("telegram/bot-token")
+
+    def resolved_telegram_chat_id(self) -> str:
+        if self.telegram_chat_id.strip():
+            return self.telegram_chat_id.strip()
+        return resolve_pass_secret("telegram/chat-id")
 
 
 settings = Settings()
