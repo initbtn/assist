@@ -64,12 +64,12 @@ class Settings(BaseSettings):
     def resolved_telegram_bot_token(self) -> str:
         if self.telegram_bot_token.strip():
             return self.telegram_bot_token.strip()
-        return resolve_pass_secret("telegram/bot-token")
+        return resolve_pass_secret("telegram/domAssistBot/bot-token")
 
     def resolved_telegram_chat_id(self) -> str:
         if self.telegram_chat_id.strip():
             return self.telegram_chat_id.strip()
-        return resolve_pass_secret("telegram/chat-id")
+        return resolve_pass_secret("telegram/domAssistBot/chat-id")
 
 
 settings = Settings()
