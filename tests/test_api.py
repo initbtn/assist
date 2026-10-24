@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi.testclient import TestClient
 
 from app.main import create_app
@@ -178,4 +180,41 @@ def test_api_end_to_end_targets_ingest_query_brief_webhook_and_collect():
         json={"models": ["B"], "date_str": "2026-10-23"},
     )
     assert res_compare_excluded.status_code == 422
+
+
+def test_measure_ollama_generation_and_run_comparison_mocked(monkeypatch):
+    import scripts.run_model_comparison as runner
+
+    def fake_post(url: str, json: dict[str, Any], timeout: float):
+        class FakeResponse:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {
+                    "response": f"Summary from {json['model']}",
+                    "eval_count": 42,
+                    "eval_duration": 1_000_000_000,
+                }
+
+        return FakeResponse()
+
+    monkeypatch.setattr("httpx.post", fake_post)
+
+    out = runner.measure_ollama_generation(
+        base_url="http://fake-ollama:11434",
+        model_name="gemma3:12b",
+        prompt="요약해줘",
+    )
+    assert out["model"] == "gemma3:12b"
+    assert out["eval_count"] == 42
+    assert out["tokens_per_second"] == 42.0
+    assert "Summary from gemma3:12b" in out["response"]
+
+    full = runner.run_comparison(
+        base_url="http://fake-ollama:11434",
+        models=["A", "C"],
+        prompt="테스트",
+    )
+    assert set(full["results"].keys()) == {"gemma3:12b", "hermes3:8b"}
 
