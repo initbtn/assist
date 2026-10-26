@@ -71,7 +71,8 @@ tar -C "${REPO_ROOT}" -czf - \
   requirements-embeddings.txt \
   pyproject.toml \
   app \
-  web | gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command="tar -C ~/assist -xzf -"
+  web \
+  scripts | gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command="tar -C ~/assist -xzf -"
 
 {
   printf 'TELEGRAM_BOT_TOKEN=%s\n' "$(pass show telegram/domAssistBot/bot-token | head -n1)"
@@ -106,15 +107,27 @@ tar -C "${REPO_ROOT}" -czf - \
 "
 
 # 5. Verify health endpoint
-EXTERNAL_IP="$(gcloud compute instances describe "${INSTANCE_NAME}" --zone="${ZONE}" --format='get(networkInterfaces[0].accessConfigs[0].natIP)')"
-echo "[4/4] Verifying http://${EXTERNAL_IP}:8001/health ..."
-for _ in {1..15}; do
-  if curl -fsS --max-time 3 "http://${EXTERNAL_IP}:8001/health" | grep -q '"ok"'; then
-    echo "Deployment verified: http://${EXTERNAL_IP}:8001/health -> ok"
-    exit 0
-  fi
-  sleep 2
-done
-
-echo "ERROR: Health check failed for http://${EXTERNAL_IP}:8001/health" >&2
-exit 1
+if [[ "${ENABLE_INBOUND_8001}" == "true" ]]; then
+  EXTERNAL_IP="$(gcloud compute instances describe "${INSTANCE_NAME}" --zone="${ZONE}" --format='get(networkInterfaces[0].accessConfigs[0].natIP)')"
+  echo "[4/4] Verifying http://${EXTERNAL_IP}:8001/health (inbound)..."
+  for _ in {1..15}; do
+    if curl -fsS --max-time 3 "http://${EXTERNAL_IP}:8001/health" | grep -q '"ok"'; then
+      echo "Deployment verified: http://${EXTERNAL_IP}:8001/health -> ok"
+      exit 0
+    fi
+    sleep 2
+  done
+  echo "ERROR: Health check failed for http://${EXTERNAL_IP}:8001/health" >&2
+  exit 1
+else
+  echo "[4/4] Verifying internal health via SSH (http://127.0.0.1:8001/health)..."
+  for _ in {1..15}; do
+    if gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command="curl -fsS --max-time 3 http://127.0.0.1:8001/health" 2>/dev/null | grep -q '"ok"'; then
+      echo "Deployment verified internally: http://127.0.0.1:8001/health -> ok (inbound port 8001 safely closed)"
+      exit 0
+    fi
+    sleep 2
+  done
+  echo "ERROR: Internal health check failed on ${INSTANCE_NAME}" >&2
+  exit 1
+fi

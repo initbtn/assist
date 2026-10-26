@@ -6,8 +6,9 @@ import sys
 import time
 from typing import Any
 
+from app.articles import InMemoryArticleStore
 from app.config import settings
-from app.rag import FakeMemoryRetriever, get_llm
+from app.rag import FakeMemoryRetriever, LLMProtocol, PGVectorRetriever, RetrieverProtocol, get_llm
 from app.targets import InMemoryTargetStore
 from app.telegram import (
     fetch_telegram_updates,
@@ -28,6 +29,10 @@ def run_polling_worker(
     timeout: int = 30,
     poll_interval: float = 1.0,
     once: bool = False,
+    target_store: InMemoryTargetStore | None = None,
+    retriever: RetrieverProtocol | None = None,
+    article_store: InMemoryArticleStore | None = None,
+    llm: LLMProtocol | None = None,
     http_get: Any = None,
     http_post: Any = None,
 ) -> int:
@@ -36,9 +41,14 @@ def run_polling_worker(
         logger.error("Telegram bot token is missing or could not be resolved.")
         return 1
 
-    target_store = InMemoryTargetStore()
-    retriever = FakeMemoryRetriever()
-    llm = get_llm(settings)
+    t_store = target_store if target_store is not None else InMemoryTargetStore(seed=True)
+    r_retriever = (
+        retriever
+        if retriever is not None
+        else (PGVectorRetriever() if settings.use_pgvector else FakeMemoryRetriever())
+    )
+    a_store = article_store if article_store is not None else InMemoryArticleStore()
+    active_llm = llm if llm is not None else get_llm(settings)
 
     def _sender(chat_id: str, text: str) -> None:
         kwargs: dict[str, Any] = {
@@ -79,10 +89,11 @@ def run_polling_worker(
                 logger.info(f"Received {len(updates)} telegram update(s)")
                 next_offset = process_telegram_updates_batch(
                     updates,
-                    target_store=target_store,
-                    retriever=retriever,
-                    llm=llm,
+                    target_store=t_store,
+                    retriever=r_retriever,
+                    llm=active_llm,
                     sender=_sender,
+                    article_store=a_store,
                 )
                 if next_offset is not None:
                     offset = next_offset
@@ -104,6 +115,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run outbound Telegram Bot long polling worker without inbound open ports."
     )
+    parser.add_argument("--bot-token", help="Optional Telegram bot token override")
     parser.add_argument("--timeout", type=int, default=30, help="Long polling timeout in seconds")
     parser.add_argument("--interval", type=float, default=1.0, help="Loop interval in seconds")
     parser.add_argument("--once", action="store_true", help="Run a single polling cycle and exit")
@@ -111,6 +123,7 @@ def main() -> None:
 
     sys.exit(
         run_polling_worker(
+            bot_token=args.bot_token,
             timeout=args.timeout,
             poll_interval=args.interval,
             once=args.once,
