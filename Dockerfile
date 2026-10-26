@@ -16,6 +16,7 @@ RUN if [ "$INSTALL_EMBEDDINGS" = "true" ]; then \
 
 COPY app ./app
 COPY web ./web
+COPY scripts ./scripts
 COPY pyproject.toml ./
 
 EXPOSE 8000
