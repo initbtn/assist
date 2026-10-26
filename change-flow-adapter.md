@@ -21,3 +21,5 @@
 | **cleanup(⑨)** | `git worktree remove` + 로컬 브랜치 `-D` (`~/projects/domstack/docs/worktree-cleanup.md` 정본 준수) |
 | **배포(⑩)** | GCP `marine-edge-pc`(`us-central1-a`, `8001` 포트) 경량 컨테이너 배포 (`./scripts/deploy-gcp.sh`, `deploy-run` 게이트 준수) |
 | **warming** | pass·gpg (`DOMSTACK_WARMING` on) |
+| **Python 구조(②)** | 모듈 하나는 하나의 책임만 진다 — 수집·변환·저장·전송을 한 함수에 섞지 않는다(SRP). 설정·주소·키는 `Settings` 같은 한 곳에서 읽고, 호출부는 인자로 받는다(DIP). I/O(HTTP·DB·LLM) 호출은 얇은 함수로 분리해 테스트에서 대체하고 실호출을 하지 않는다. 공개 함수는 쓰는 인자만 받는다(ISP) |
+| **하드코딩·상수(②)** | 매직 넘버·색·URL·키·문구를 코드에 흩뿌려 박지 않는다. 같은 값이 둘 이상의 자리에 쓰이면 한 곳(상수·토큰·설정)에서 정의해 참조한다. 환경마다 다른 값은 설정·env 로 받고 시크릿은 코드에 두지 않는다 |
