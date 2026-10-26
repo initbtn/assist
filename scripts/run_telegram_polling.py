@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 import argparse
 import logging
+import os
 import signal
 import sys
 import time
 from typing import Any
+
+# Ensure repository root is on sys.path
+_repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
 
 from app.articles import InMemoryArticleStore
 from app.config import settings

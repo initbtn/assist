@@ -88,10 +88,11 @@ tar -C "${REPO_ROOT}" -czf - \
   trap 'shred -u \"\${TMP_ENV}\" 2>/dev/null || rm -f \"\${TMP_ENV}\"' EXIT
   cat > \"\${TMP_ENV}\"
   cd ~/assist
+  sudo docker rm -f assist-api assist-bot 2>/dev/null || true
   if sudo docker compose version >/dev/null 2>&1; then
-    sudo docker compose -f docker-compose.gcp.yml --env-file \"\${TMP_ENV}\" up -d --build
+    sudo docker compose -f docker-compose.gcp.yml --env-file \"\${TMP_ENV}\" up -d --build --remove-orphans
   else
-    sudo docker-compose -f docker-compose.gcp.yml --env-file \"\${TMP_ENV}\" up -d --build
+    sudo docker-compose -f docker-compose.gcp.yml --env-file \"\${TMP_ENV}\" up -d --build --remove-orphans
   fi
 
   # Drop build pagecache and purge swap if SwapUsed > 0 and MemAvailable >= SwapUsed + 64MB

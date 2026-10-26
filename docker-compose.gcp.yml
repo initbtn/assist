@@ -27,8 +27,9 @@ services:
     container_name: assist-bot
     depends_on:
       - assist
-    command: ["python", "scripts/run_telegram_polling.py"]
+    command: ["python", "-m", "scripts.run_telegram_polling"]
     environment:
+      PYTHONPATH: /app
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://127.0.0.1:11434}
       OLLAMA_MODEL_NAME: ${OLLAMA_MODEL_NAME:-gemma3:12b}
