@@ -16,22 +16,30 @@ if ! gpg-connect-agent 'keyinfo --list' /bye 2>/dev/null | awk '$7 == 1 {found=1
   exit 1
 fi
 
-# 2. Resolve and validate allowed source IP ranges via sys.argv[1]
-ADMIN_IP="${ADMIN_IP:-$(curl -s --max-time 5 https://api.ipify.org)}"
-SOURCE_RANGES="$(PYTHONPATH="${REPO_ROOT}" "${PYTHON_BIN}" -c "import sys; from app.config import build_gcp_allowed_source_ranges; print(build_gcp_allowed_source_ranges(sys.argv[1]))" "${ADMIN_IP}")"
-
-echo "[1/4] Configuring GCP firewall rule ${FIREWALL_RULE} (source-ranges: ${SOURCE_RANGES})..."
-if gcloud compute firewall-rules describe "${FIREWALL_RULE}" >/dev/null 2>&1; then
-  gcloud compute firewall-rules update "${FIREWALL_RULE}" \
-    --allow="tcp:8001" \
-    --source-ranges="${SOURCE_RANGES}" \
-    --quiet
+# 2. Configure inbound firewall (default: disabled, outbound-only mode)
+ENABLE_INBOUND_8001="${ENABLE_INBOUND_8001:-false}"
+if [[ "${ENABLE_INBOUND_8001}" == "true" ]]; then
+  ADMIN_IP="${ADMIN_IP:-$(curl -s --max-time 5 https://api.ipify.org)}"
+  SOURCE_RANGES="$(PYTHONPATH="${REPO_ROOT}" "${PYTHON_BIN}" -c "import sys; from app.config import build_gcp_allowed_source_ranges; print(build_gcp_allowed_source_ranges(sys.argv[1]))" "${ADMIN_IP}")"
+  echo "[1/4] Inbound 8001 enabled: Configuring GCP firewall rule ${FIREWALL_RULE} (source-ranges: ${SOURCE_RANGES})..."
+  if gcloud compute firewall-rules describe "${FIREWALL_RULE}" >/dev/null 2>&1; then
+    gcloud compute firewall-rules update "${FIREWALL_RULE}" \
+      --allow="tcp:8001" \
+      --source-ranges="${SOURCE_RANGES}" \
+      --no-disabled \
+      --quiet
+  else
+    gcloud compute firewall-rules create "${FIREWALL_RULE}" \
+      --allow="tcp:8001" \
+      --source-ranges="${SOURCE_RANGES}" \
+      --description="Allow restricted access to assist-api on port 8001" \
+      --quiet
+  fi
 else
-  gcloud compute firewall-rules create "${FIREWALL_RULE}" \
-    --allow="tcp:8001" \
-    --source-ranges="${SOURCE_RANGES}" \
-    --description="Allow restricted access to assist-api on port 8001 (Admin IP + Telegram Webhook CIDRs)" \
-    --quiet
+  echo "[1/4] Inbound port 8001 disabled (outbound-only mode). Ensuring firewall rule is disabled..."
+  if gcloud compute firewall-rules describe "${FIREWALL_RULE}" >/dev/null 2>&1; then
+    gcloud compute firewall-rules update "${FIREWALL_RULE}" --disabled --quiet >/dev/null 2>&1 || true
+  fi
 fi
 
 # 3. Ensure 2GB Swap + vm.swappiness=10 on marine-edge-pc (idempotent)

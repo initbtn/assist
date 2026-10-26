@@ -19,6 +19,13 @@ def _default_http_post(url: str, json_payload: dict[str, Any]) -> dict[str, Any]
     return resp.json()
 
 
+def _default_http_get(url: str, params: dict[str, Any]) -> dict[str, Any]:
+    timeout = float(params.get("timeout", 30)) + 5.0
+    resp = httpx.get(url, params=params, timeout=timeout)
+    resp.raise_for_status()
+    return resp.json()
+
+
 def send_telegram_message(
     text: str,
     *,
@@ -44,6 +51,28 @@ def send_telegram_message(
         "disable_web_page_preview": True,
     }
     return http_post(url, payload)
+
+
+def fetch_telegram_updates(
+    *,
+    bot_token: str,
+    offset: int | None = None,
+    timeout: int = 30,
+    http_get: Callable[[str, dict[str, Any]], dict[str, Any]] = _default_http_get,
+) -> list[dict[str, Any]]:
+    cleaned_token = bot_token.strip()
+    if not cleaned_token:
+        raise ValueError("bot_token must not be empty")
+
+    url = f"https://api.telegram.org/bot{cleaned_token}/getUpdates"
+    params: dict[str, Any] = {"timeout": timeout}
+    if offset is not None:
+        params["offset"] = offset
+
+    data = http_get(url, params)
+    if isinstance(data, dict) and data.get("ok"):
+        return data.get("result", [])
+    return []
 
 
 def _format_targets_summary(target_store: InMemoryTargetStore) -> str:
@@ -103,3 +132,34 @@ def handle_telegram_update(
 
     sender(chat_id, reply)
     return reply
+
+
+def process_telegram_updates_batch(
+    updates: list[dict[str, Any]],
+    *,
+    target_store: InMemoryTargetStore,
+    retriever: RetrieverProtocol,
+    llm: LLMProtocol,
+    sender: Callable[[str, str], None],
+    article_store: InMemoryArticleStore | None = None,
+    base_ui_url: str | None = None,
+) -> int | None:
+    if not updates:
+        return None
+
+    last_offset = None
+    for item in updates:
+        update_id = item.get("update_id")
+        if isinstance(update_id, int):
+            last_offset = update_id + 1
+        handle_telegram_update(
+            item,
+            target_store=target_store,
+            retriever=retriever,
+            llm=llm,
+            sender=sender,
+            article_store=article_store,
+            base_ui_url=base_ui_url,
+        )
+
+    return last_offset
