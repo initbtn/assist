@@ -80,18 +80,23 @@ if [[ "${DRY_RUN}" == "true" ]]; then
   exit 0
 fi
 
-if ! command -v colab >/dev/null 2>&1; then
-  echo "ERROR: 'colab' command not found." >&2
-  echo "Install it with: pip install google-colab-cli (or uv tool install google-colab-cli)" >&2
-  echo "Then authenticate with: colab auth login" >&2
-  exit 1
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+COLAB_BIN="${REPO_ROOT}/.venv/bin/colab"
+if [[ ! -x "${COLAB_BIN}" ]]; then
+  if command -v colab >/dev/null 2>&1; then
+    COLAB_BIN="$(command -v colab)"
+  else
+    echo "ERROR: 'colab' command not found." >&2
+    echo "Install it with: pip install google-colab-cli (or in .venv: .venv/bin/pip install google-colab-cli)" >&2
+    exit 1
+  fi
 fi
 
 echo "[1/3] Provisioning Colab runtime with GPU: ${GPU_TYPE}..."
-colab new --gpu "${GPU_TYPE}"
+"${COLAB_BIN}" new --gpu "${GPU_TYPE}"
 
 echo "[2/3] Installing Ollama and pulling gemma3:12b & hermes3:8b..."
-cat << 'PYEOF' | colab exec
+cat << 'PYEOF' | "${COLAB_BIN}" exec
 import subprocess, sys
 
 script = """
@@ -112,10 +117,10 @@ PYEOF
 if [[ "${PORT_FORWARD}" == "true" ]]; then
   echo "[3/3] Establishing port forwarding (11434 -> localhost:11434)..."
   echo "Run assist with OLLAMA_BASE_URL=http://localhost:11434"
-  colab ssh -- -N -L 11434:localhost:11434
+  "${COLAB_BIN}" ssh -- -N -L 11434:localhost:11434
 else
   echo "[3/3] Starting Cloudflare Quick Tunnel on Colab..."
-  cat << 'PYEOF' | colab exec
+  cat << 'PYEOF' | "${COLAB_BIN}" exec
 import subprocess, time, re
 
 tunnel_script = """

@@ -1,4 +1,5 @@
 PYTEST ?= $(shell if [ -x .venv/bin/pytest ]; then echo .venv/bin/pytest; elif [ -x "$$(git rev-parse --git-common-dir 2>/dev/null)/../.venv/bin/pytest" ]; then echo "$$(git rev-parse --git-common-dir 2>/dev/null)/../.venv/bin/pytest"; else which pytest 2>/dev/null || echo pytest; fi)
+COLAB ?= $(shell if [ -x .venv/bin/colab ]; then echo .venv/bin/colab; elif [ -x "$$(git rev-parse --git-common-dir 2>/dev/null)/../.venv/bin/colab" ]; then echo "$$(git rev-parse --git-common-dir 2>/dev/null)/../.venv/bin/colab"; else which colab 2>/dev/null || echo colab; fi)
 
 .PHONY: help test colab-login colab-llm colab-dry colab-ssh compare deploy bot-logs
 
@@ -17,7 +18,7 @@ test:
 	$(PYTEST) -q
 
 colab-login:
-	colab auth login
+	$(COLAB) status || $(COLAB) new --help
 
 colab-llm:
 	./scripts/run_colab_llm.sh
