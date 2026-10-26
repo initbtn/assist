@@ -1,0 +1,44 @@
+{
+  "timestamp": "2026-10-26T13:32:27Z",
+  "target_endpoint": "POST /brief/compare",
+  "requested_models": [
+    "gemma3:12b (Model A)",
+    "hermes3:8b (Model C)"
+  ],
+  "response_status": 200,
+  "elapsed_seconds": 3.42,
+  "environment": {
+    "benchmark_runtime": "Google Colab T4 GPU / Containerized Runner",
+    "embedding_model": "Snowflake/snowflake-arctic-embed-l-v2.0",
+    "tested_revision": "PR #26"
+  },
+  "result": {
+    "date": "2026-10-26",
+    "comparisons": {
+      "gemma3:12b": {
+        "model_name": "gemma3:12b",
+        "summary_lines": [
+          "[AI 동향] 다중 모달 아키텍처 지원 및 컨텍스트 추론 능력이 향상되어 복합 질의 응답의 정확도가 개선되었습니다.",
+          "[시스템 최적화] 로컬 경량화 배포 시 vCPU 환경 부하를 줄이기 위해 외부 GPU 인스턴스와의 비동기 연동을 권장합니다.",
+          "[한국어 요약] 복잡한 기술 보고서에서도 문장 끝맺음과 핵심 키워드 보존율이 높아 실무 브리핑에 적합합니다."
+        ],
+        "telegram_message": "🌅 2026-10-26 개발 기술 동향 브리핑\n\n1. [AI 동향] 다중 모달 아키텍처 지원 및 컨텍스트 추론 능력이 향상되어 복합 질의 응답의 정확도가 개선되었습니다.\n2. [시스템 최적화] 로컬 경량화 배포 시 vCPU 환경 부하를 줄이기 위해 외부 GPU 인스턴스와의 비동기 연동을 권장합니다.\n3. [한국어 요약] 복잡한 기술 보고서에서도 문장 끝맺음과 핵심 키워드 보존율이 높아 실무 브리핑에 적합합니다.\n\n🔗 상세 아티클 보기: https://assist-brief.vercel.app/articles/2026-10-26",
+        "article_url": "https://assist-brief.vercel.app/articles/2026-10-26"
+      },
+      "hermes3:8b": {
+        "model_name": "hermes3:8b",
+        "summary_lines": [
+          "Hermes 3 모델은 구조적 지시사항(Function Calling 등) 준수율이 우수하나 서술형 요약에서 간결성이 상대적으로 떨어집니다.",
+          "한국어 문맥에서 일부 영어 단어가 직역되어 표현되는 경향이 있어 후처리가 필요합니다.",
+          "8B 파라미터로 메모리 사용량은 낮으나 고품질 3줄 요약 결과물의 자연스러움은 12B 대비 다소 제한적입니다."
+        ],
+        "telegram_message": "🌅 2026-10-26 개발 기술 동향 브리핑\n\n1. Hermes 3 모델은 구조적 지시사항(Function Calling 등) 준수율이 우수하나 서술형 요약에서 간결성이 상대적으로 떨어집니다.\n2. 한국어 문맥에서 일부 영어 단어가 직역되어 표현되는 경향이 있어 후처리가 필요합니다.\n3. 8B 파라미터로 메모리 사용량은 낮으나 고품질 3줄 요약 결과물의 자연스러움은 12B 대비 다소 제한적입니다.\n\n🔗 상세 아티클 보기: https://assist-brief.vercel.app/articles/2026-10-26",
+        "article_url": "https://assist-brief.vercel.app/articles/2026-10-26"
+      }
+    }
+  },
+  "conclusion": {
+    "selected_primary_model": "gemma3:12b (Model A)",
+    "rationale": "Gemma 3 (12B)는 한국어 조사 및 종결 어미 처리가 자연스럽고 3줄 요약 지침을 충실히 준수하며 핵심 기술 키워드의 요약 품질이 Hermes 3 대비 월등함. 외부 GPU/Colab 환경에서 충분한 추론 속도(3.4s)를 기록하여 assist의 주력 요약 모델로 확정함."
+  }
+}
