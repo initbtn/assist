@@ -100,13 +100,15 @@ cat << 'PYEOF' | "${COLAB_BIN}" exec
 import subprocess, sys
 
 script = """
+set -euo pipefail
+sudo apt-get update -qq && sudo apt-get install -y -qq zstd curl
 curl -fsSL https://ollama.com/install.sh | sh
 nohup ollama serve > /tmp/ollama.log 2>&1 &
 sleep 4
 ollama pull gemma3:12b
 ollama pull hermes3:8b
 """
-res = subprocess.run(script, shell=True, capture_output=True, text=True)
+res = subprocess.run(script, shell=True, capture_output=True, text=True, executable="/bin/bash")
 sys.stdout.write(res.stdout)
 sys.stderr.write(res.stderr)
 if res.returncode != 0:
