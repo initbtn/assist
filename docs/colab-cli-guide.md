@@ -66,3 +66,21 @@ colab auth login
 ## 4. 리소스 및 운영 팁
 - **동적 모델 스와핑**: Colab T4 GPU(15GB VRAM) 상의 Ollama 데몬에 `gemma3:12b`와 `hermes3:8b`가 함께 적재되어, 요청된 모델에 따라 자동으로 VRAM 스와핑 처리되므로 OOM 없이 안정적으로 동작합니다.
 - **세션 종료**: 사용이 끝나면 터미널에서 `colab stop` 또는 `colab list`로 세션을 조회하고 종료할 수 있습니다.
+
+
+---
+
+## 5. Makefile 단축 명령어
+
+프로젝트 루트의 `Makefile`을 통해 간편하게 실행할 수 있습니다:
+
+```bash
+make help          # 전체 사용 가능한 명령어 목록 확인
+make colab-login   # Google Colab CLI 계정 인증
+make colab-llm     # Colab T4 GPU 세션 생성 및 Ollama 기동 (터널 생성)
+make colab-dry     # 명령어 템플릿 dry-run 확인
+make colab-ssh     # SSH 포트포워딩 (11434 바인딩)
+make deploy        # GCP marine-edge-pc 실서버 배포
+make bot-logs      # GCP 텔레그램 봇 실시간 로그 확인
+make test          # 전체 단위/통합 테스트 실행
+```

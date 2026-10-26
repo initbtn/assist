@@ -123,13 +123,18 @@ curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cl
 nohup /tmp/cloudflared tunnel --url http://localhost:11434 > /tmp/cloudflared.log 2>&1 &
 """
 subprocess.run(tunnel_script, shell=True, check=True)
-time.sleep(4)
 
 url = None
-with open("/tmp/cloudflared.log", "r", encoding="utf-8", errors="ignore") as f:
-    matches = re.findall(r'https://[-a-zA-Z0-9]+\.trycloudflare\.com', f.read())
-    if matches:
-        url = matches[-1]
+for _ in range(15):
+    time.sleep(1)
+    try:
+        with open("/tmp/cloudflared.log", "r", encoding="utf-8", errors="ignore") as f:
+            matches = re.findall(r'https://[-a-zA-Z0-9]+\.trycloudflare\.com', f.read())
+            if matches:
+                url = matches[-1]
+                break
+    except Exception:
+        pass
 
 if url:
     print(f"\n==========================================")
