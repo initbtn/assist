@@ -15,7 +15,7 @@ pip install google-colab-cli
 # uv tool install google-colab-cli
 
 # 2. 구글 계정 브라우저 인증 (1회 수행, 토큰은 ~/.config에 안전 저장)
-colab login
+colab auth login
 ```
 
 ---
