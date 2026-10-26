@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi.testclient import TestClient
 
 from app.main import create_app
@@ -178,4 +180,50 @@ def test_api_end_to_end_targets_ingest_query_brief_webhook_and_collect():
         json={"models": ["B"], "date_str": "2026-10-23"},
     )
     assert res_compare_excluded.status_code == 422
+
+
+def test_compare_brief_api_runner_mocked():
+    import scripts.run_model_comparison as runner
+
+    class StubHttpClient:
+        def post(self, url: str, json: dict[str, Any]):
+            assert url == "http://test-server:8000/brief/compare"
+            assert json["models"] == ["A", "C"]
+            assert json["date_str"] == "2026-10-24"
+
+            class FakeResponse:
+                def raise_for_status(self):
+                    pass
+
+                def json(self):
+                    return {
+                        "date": "2026-10-24",
+                        "comparisons": {
+                            "gemma3:12b": {
+                                "model_name": "gemma3:12b",
+                                "summary_lines": ["1", "2", "3"],
+                                "article_url": "https://assist-brief.vercel.app/articles/2026-10-24",
+                                "brief_text": "Gemma 요약",
+                            },
+                            "hermes3:8b": {
+                                "model_name": "hermes3:8b",
+                                "summary_lines": ["A", "B", "C"],
+                                "article_url": "https://assist-brief.vercel.app/articles/2026-10-24",
+                                "brief_text": "Hermes 요약",
+                            },
+                        },
+                    }
+
+            return FakeResponse()
+
+    res = runner.compare_brief_api(
+        "http://test-server:8000",
+        models=["A", "C"],
+        date_str="2026-10-24",
+        http_client=StubHttpClient(),
+    )
+    assert res["date"] == "2026-10-24"
+    assert "gemma3:12b" in res["comparisons"]
+    assert "hermes3:8b" in res["comparisons"]
+    assert res["elapsed_seconds"] >= 0.0
 
