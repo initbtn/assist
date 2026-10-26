@@ -182,39 +182,48 @@ def test_api_end_to_end_targets_ingest_query_brief_webhook_and_collect():
     assert res_compare_excluded.status_code == 422
 
 
-def test_measure_ollama_generation_and_run_comparison_mocked(monkeypatch):
+def test_compare_brief_api_runner_mocked():
     import scripts.run_model_comparison as runner
 
-    def fake_post(url: str, json: dict[str, Any], timeout: float):
-        class FakeResponse:
-            def raise_for_status(self):
-                pass
+    class StubHttpClient:
+        def post(self, url: str, json: dict[str, Any]):
+            assert url == "http://test-server:8000/brief/compare"
+            assert json["models"] == ["A", "C"]
+            assert json["date_str"] == "2026-10-24"
 
-            def json(self):
-                return {
-                    "response": f"Summary from {json['model']}",
-                    "eval_count": 42,
-                    "eval_duration": 1_000_000_000,
-                }
+            class FakeResponse:
+                def raise_for_status(self):
+                    pass
 
-        return FakeResponse()
+                def json(self):
+                    return {
+                        "date": "2026-10-24",
+                        "comparisons": {
+                            "gemma3:12b": {
+                                "model_name": "gemma3:12b",
+                                "summary_lines": ["1", "2", "3"],
+                                "article_url": "https://assist-brief.vercel.app/articles/2026-10-24",
+                                "brief_text": "Gemma 요약",
+                            },
+                            "hermes3:8b": {
+                                "model_name": "hermes3:8b",
+                                "summary_lines": ["A", "B", "C"],
+                                "article_url": "https://assist-brief.vercel.app/articles/2026-10-24",
+                                "brief_text": "Hermes 요약",
+                            },
+                        },
+                    }
 
-    monkeypatch.setattr("httpx.post", fake_post)
+            return FakeResponse()
 
-    out = runner.measure_ollama_generation(
-        base_url="http://fake-ollama:11434",
-        model_name="gemma3:12b",
-        prompt="요약해줘",
-    )
-    assert out["model"] == "gemma3:12b"
-    assert out["eval_count"] == 42
-    assert out["tokens_per_second"] == 42.0
-    assert "Summary from gemma3:12b" in out["response"]
-
-    full = runner.run_comparison(
-        base_url="http://fake-ollama:11434",
+    res = runner.compare_brief_api(
+        "http://test-server:8000",
         models=["A", "C"],
-        prompt="테스트",
+        date_str="2026-10-24",
+        http_client=StubHttpClient(),
     )
-    assert set(full["results"].keys()) == {"gemma3:12b", "hermes3:8b"}
+    assert res["date"] == "2026-10-24"
+    assert "gemma3:12b" in res["comparisons"]
+    assert "hermes3:8b" in res["comparisons"]
+    assert res["elapsed_seconds"] >= 0.0
 

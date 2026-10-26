@@ -5,91 +5,73 @@ from typing import Any
 
 import httpx
 
-from app.rag import OLLAMA_MODEL_PRESETS, resolve_ollama_model_name
 
-
-def measure_ollama_generation(
-    base_url: str,
-    model_name: str,
-    prompt: str,
+def compare_brief_api(
+    api_url: str,
     *,
-    timeout: float = 120.0,
+    models: list[str] | None = None,
+    domain: str | None = None,
+    date_str: str | None = None,
+    timeout: float = 180.0,
+    http_client: Any | None = None,
 ) -> dict[str, Any]:
-    url = f"{base_url.rstrip('/')}/api/generate"
-    payload = {
-        "model": model_name,
-        "prompt": prompt,
-        "stream": False,
+    target_url = f"{api_url.rstrip('/')}/brief/compare"
+    payload: dict[str, Any] = {
+        "models": models or ["A", "C"],
     }
+    if domain:
+        payload["domain"] = domain
+    if date_str:
+        payload["date_str"] = date_str
+
     start = time.perf_counter()
-    resp = httpx.post(url, json=payload, timeout=timeout)
+    if http_client is not None:
+        resp = http_client.post(target_url, json=payload)
+    else:
+        resp = httpx.post(target_url, json=payload, timeout=timeout)
     resp.raise_for_status()
     elapsed = time.perf_counter() - start
+
     data = resp.json()
-
-    response_text = str(data.get("response") or "").strip()
-    eval_count = data.get("eval_count") or len(response_text.split())
-    eval_duration_ns = data.get("eval_duration") or int(elapsed * 1e9)
-    tok_per_sec = (
-        (eval_count / (eval_duration_ns / 1e9)) if eval_duration_ns > 0 else 0.0
-    )
-
-    return {
-        "model": model_name,
-        "elapsed_seconds": round(elapsed, 2),
-        "eval_count": eval_count,
-        "tokens_per_second": round(tok_per_sec, 1),
-        "response": response_text,
-    }
-
-
-def run_comparison(
-    base_url: str,
-    models: list[str] | None = None,
-    prompt: str | None = None,
-) -> dict[str, Any]:
-    target_models = models or ["A", "C"]
-    test_prompt = (
-        prompt
-        or "다음 기술 동향을 개발자를 위해 핵심만 한국어 3줄 요약해줘:\n"
-        "- Next.js 16: 내장 DevTools MCP 서버 탑재 및 Cache Components 정식화\n"
-        "- NestJS 12: ESM 전면 전환 및 Standard Schema(Zod, Valibot) 지원\n"
-        "- Claude Code: 서브에이전트 오케스트레이션 및 review-army 규율 연동"
-    )
-
-    results: dict[str, Any] = {}
-    for item in target_models:
-        resolved = resolve_ollama_model_name(item)
-        print(f"Testing model {item} ({resolved}) at {base_url} ...")
-        metrics = measure_ollama_generation(base_url, resolved, test_prompt)
-        results[resolved] = metrics
-        print(
-            f"  -> {metrics['elapsed_seconds']}s, {metrics['tokens_per_second']} t/s"
-        )
-
     return {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "base_url": base_url,
-        "results": results,
+        "api_url": target_url,
+        "elapsed_seconds": round(elapsed, 2),
+        "requested_models": payload["models"],
+        "date": data.get("date"),
+        "comparisons": data.get("comparisons", {}),
     }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Benchmark Gemma 3 vs Hermes 3 on remote Ollama"
+        description="Benchmark POST /brief/compare on assist API (Gemma 3 vs Hermes 3)"
     )
     parser.add_argument(
-        "--base-url", required=True, help="Ollama base URL (e.g. Cloudflare tunnel URL)"
+        "--api-url",
+        default="http://127.0.0.1:8000",
+        help="assist API base URL (e.g. http://127.0.0.1:8000 or http://34.133.74.29:8001)",
     )
     parser.add_argument(
-        "--models", nargs="+", default=["A", "C"], help="Models or presets (A, C)"
+        "--models",
+        nargs="+",
+        default=["A", "C"],
+        help="Model presets or names to compare (default: A C)",
     )
+    parser.add_argument("--domain", help="Optional domain filter")
+    parser.add_argument("--date-str", help="Optional date string (YYYY-MM-DD)")
     parser.add_argument("--output", help="Optional output JSON file path")
     args = parser.parse_args()
 
-    report = run_comparison(args.base_url, models=args.models)
+    print(f"Calling POST {args.api_url}/brief/compare with models {args.models} ...")
+    report = compare_brief_api(
+        args.api_url,
+        models=args.models,
+        domain=args.domain,
+        date_str=args.date_str,
+    )
     formatted = json.dumps(report, indent=2, ensure_ascii=False)
-    print("\n=== Benchmark Summary ===")
+    print("\n=== POST /brief/compare Benchmark Result ===")
     print(formatted)
 
     if args.output:
