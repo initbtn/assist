@@ -131,10 +131,10 @@ script = f'''
 import subprocess
 tunnel_script = f\"\"\"
 curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /tmp/cloudflared && chmod +x /tmp/cloudflared
-nohup /tmp/cloudflared tunnel run --token {token} > /tmp/cloudflared.log 2>&1 &
+nohup /tmp/cloudflared tunnel run --url http://localhost:11434 --token {token} > /tmp/cloudflared.log 2>&1 &
 \"\"\"
 subprocess.run(tunnel_script, shell=True, check=True)
-print('Cloudflare Named Tunnel started successfully with domain: https://colab-model.conn.ai.kr')
+print('Cloudflare Named Tunnel started successfully with domain: https://dom-slm.conn.ai.kr')
 '''
 p = subprocess.Popen(['${COLAB_BIN}', 'exec'], stdin=subprocess.PIPE, text=True)
 p.communicate(input=script)
@@ -142,7 +142,7 @@ if p.returncode != 0:
     sys.exit(p.returncode)
 " <<< "${CF_TOKEN}"
     echo "=========================================="
-    echo "Colab Cloudflare Tunnel URL: https://colab-model.conn.ai.kr"
+    echo "Colab Cloudflare Tunnel URL: https://dom-slm.conn.ai.kr"
     echo "=========================================="
   else
     echo "[3/3] Starting Cloudflare Quick Tunnel on Colab..."
