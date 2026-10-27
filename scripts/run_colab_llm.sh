@@ -51,7 +51,7 @@ done
 
 OLLAMA_SETUP_COMMANDS=$(cat << 'EOF'
 curl -fsSL https://ollama.com/install.sh | sh
-nohup ollama serve > /tmp/ollama.log 2>&1 &
+nohup env OLLAMA_HOST=0.0.0.0 OLLAMA_ORIGINS=* ollama serve > /tmp/ollama.log 2>&1 &
 sleep 4
 echo "Pulling Model A (gemma3:12b)..."
 ollama pull gemma3:12b
@@ -103,7 +103,7 @@ script = """
 set -euo pipefail
 sudo apt-get update -qq && sudo apt-get install -y -qq zstd curl
 curl -fsSL https://ollama.com/install.sh | sh
-nohup ollama serve > /tmp/ollama.log 2>&1 &
+nohup env OLLAMA_HOST=0.0.0.0 OLLAMA_ORIGINS=* ollama serve > /tmp/ollama.log 2>&1 &
 sleep 4
 ollama pull gemma3:12b
 ollama pull hermes3:8b
@@ -121,8 +121,32 @@ if [[ "${PORT_FORWARD}" == "true" ]]; then
   echo "Run assist with OLLAMA_BASE_URL=http://localhost:11434"
   "${COLAB_BIN}" ssh -- -N -L 11434:localhost:11434
 else
-  echo "[3/3] Starting Cloudflare Quick Tunnel on Colab..."
-  cat << 'PYEOF' | "${COLAB_BIN}" exec
+  CF_TOKEN="$(pass show cloudflare/colab-tunnel-token 2>/dev/null | head -n1 || true)"
+  if [[ -n "${CF_TOKEN}" ]]; then
+    echo "[3/3] Starting Cloudflare Named Tunnel (token from pass)..."
+    python3 -c "
+import sys, subprocess
+token = sys.stdin.read().strip()
+script = f'''
+import subprocess
+tunnel_script = f\"\"\"
+curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /tmp/cloudflared && chmod +x /tmp/cloudflared
+nohup /tmp/cloudflared tunnel run --token {token} > /tmp/cloudflared.log 2>&1 &
+\"\"\"
+subprocess.run(tunnel_script, shell=True, check=True)
+print('Cloudflare Named Tunnel started successfully with domain: https://colab-model.conn.ai.kr')
+'''
+p = subprocess.Popen(['${COLAB_BIN}', 'exec'], stdin=subprocess.PIPE, text=True)
+p.communicate(input=script)
+if p.returncode != 0:
+    sys.exit(p.returncode)
+" <<< "${CF_TOKEN}"
+    echo "=========================================="
+    echo "Colab Cloudflare Tunnel URL: https://colab-model.conn.ai.kr"
+    echo "=========================================="
+  else
+    echo "[3/3] Starting Cloudflare Quick Tunnel on Colab..."
+    cat << 'PYEOF' | "${COLAB_BIN}" exec
 import subprocess, time, re
 
 tunnel_script = """
@@ -150,5 +174,6 @@ if url:
 else:
     print("Warning: Could not detect Cloudflare tunnel URL automatically. Check /tmp/cloudflared.log on Colab.")
 PYEOF
+  fi
   echo "Use the above URL for OLLAMA_BASE_URL in scripts/deploy-gcp.sh"
 fi
