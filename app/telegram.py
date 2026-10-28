@@ -1,3 +1,4 @@
+import logging
 import re
 from collections import defaultdict
 from typing import Any, Callable
@@ -12,6 +13,9 @@ from app.articles import (
 from app.config import settings
 from app.rag import LLMProtocol, RetrieverProtocol, answer_question
 from app.targets import InMemoryTargetStore
+
+logger = logging.getLogger(__name__)
+DEFAULT_BOT_USERNAME = "DomAssistBot"
 
 
 def _default_http_post(url: str, json_payload: dict[str, Any]) -> dict[str, Any]:
@@ -124,26 +128,27 @@ def handle_telegram_update(
     # 3. Direct reply to bot's message
     is_command = raw_text.startswith("/")
     has_mention = bool(
-        re.search(r"@DomAssistBot\b", raw_text, flags=re.IGNORECASE)
+        re.search(rf"@{DEFAULT_BOT_USERNAME}\b", raw_text, flags=re.IGNORECASE)
         or any(
             entity.get("type") == "mention"
-            and "@DomAssistBot".lower() in raw_text[entity.get("offset", 0):entity.get("offset", 0) + entity.get("length", 0)].lower()
+            and f"@{DEFAULT_BOT_USERNAME}".lower() in raw_text[entity.get("offset", 0):entity.get("offset", 0) + entity.get("length", 0)].lower()
             for entity in message.get("entities", [])
         )
     )
     is_reply_to_bot = False
     reply_to = message.get("reply_to_message") or {}
     reply_from = reply_to.get("from") or {}
-    if reply_from.get("is_bot") and (reply_from.get("username") or "").lower() == "domassistbot":
+    if reply_from.get("is_bot") and (reply_from.get("username") or "").lower() == DEFAULT_BOT_USERNAME.lower():
         is_reply_to_bot = True
 
     if is_group and not (is_command or has_mention or is_reply_to_bot):
+        logger.debug("Group message ignored: not targeted to bot")
         return ""
 
     # Strip bot mention in group chats (e.g. /command@DomAssistBot -> /command, @DomAssistBot query -> query)
     text = re.sub(r"^(/[a-zA-Z0-9_]+)@\w+", r"\1", raw_text)
     text = re.sub(r"^@\w+[\s,:]*", "", text).strip()
-    text = re.sub(r"@DomAssistBot\b", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(rf"@{DEFAULT_BOT_USERNAME}\b", "", text, flags=re.IGNORECASE).strip()
 
     if not text:
         return ""
