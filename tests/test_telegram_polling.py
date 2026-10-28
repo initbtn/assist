@@ -214,7 +214,47 @@ def test_run_polling_worker_seeds_initial_knowledge_by_default():
     )
 
     assert exit_code == 0
-    assert len(sent_messages) == 1
-    assert "저장된 지식 베이스에서 관련된 동향 문서를 찾지 못했습니다." not in sent_messages[0]["text"]
-    assert "출처:" in sent_messages[0]["text"]
+    assert len(sent_messages) in (1, 2)
+    assert "저장된 지식 베이스에서 관련된 동향 문서를 찾지 못했습니다." not in sent_messages[-1]["text"]
+    assert "출처:" in sent_messages[-1]["text"]
+
+
+def test_handle_telegram_update_triggers_provisioner_when_offline():
+    sent_messages = []
+
+    def mock_sender(chat_id: str, text: str):
+        sent_messages.append((chat_id, text))
+
+    class MockOfflineProvisioner:
+        def __init__(self):
+            self.triggered = False
+
+        def check_health(self) -> bool:
+            return False
+
+        def trigger_background_provision(self) -> None:
+            self.triggered = True
+
+    prov = MockOfflineProvisioner()
+    update = {
+        "update_id": 500,
+        "message": {
+            "chat": {"id": 1234},
+            "text": "새로운 프레임워크 동향 알려줘",
+        },
+    }
+
+    process_telegram_updates_batch(
+        [update],
+        target_store=InMemoryTargetStore(),
+        retriever=FakeMemoryRetriever(),
+        llm=MockLLM(),
+        sender=mock_sender,
+        provisioner=prov,
+    )
+
+    assert prov.triggered is True
+    assert len(sent_messages) == 2
+    assert "온디맨드로 부팅 중입니다" in sent_messages[0][1]
+
 

@@ -15,6 +15,7 @@ if _repo_root not in sys.path:
 from app.articles import InMemoryArticleStore
 from app.collectors import seed_initial_knowledge
 from app.config import settings
+from app.provisioner import ColabProvisioner
 from app.rag import FakeMemoryRetriever, LLMProtocol, PGVectorRetriever, RetrieverProtocol, get_llm
 from app.targets import InMemoryDeduplicationStore, InMemoryTargetStore
 from app.telegram import (
@@ -40,6 +41,7 @@ def run_polling_worker(
     retriever: RetrieverProtocol | None = None,
     article_store: InMemoryArticleStore | None = None,
     llm: LLMProtocol | None = None,
+    provisioner: Any | None = None,
     http_get: Any = None,
     http_post: Any = None,
 ) -> int:
@@ -60,6 +62,9 @@ def run_polling_worker(
         logger.info("Seeded %d initial chunks into knowledge base", seeded_count)
     a_store = article_store if article_store is not None else InMemoryArticleStore()
     active_llm = llm if llm is not None else get_llm(settings)
+    active_prov = provisioner if provisioner is not None else (
+        ColabProvisioner() if settings.llm_provider == "ollama" else None
+    )
 
     def _sender(chat_id: str, text: str) -> None:
         kwargs: dict[str, Any] = {
@@ -105,6 +110,7 @@ def run_polling_worker(
                     llm=active_llm,
                     sender=_sender,
                     article_store=a_store,
+                    provisioner=active_prov,
                 )
                 if next_offset is not None:
                     offset = next_offset

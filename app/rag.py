@@ -233,7 +233,18 @@ def answer_question(
         f"### 컨텍스트\n{chr(10).join(context_blocks)}\n\n"
         f"### 질문\n{cleaned_q}"
     )
-    answer = llm.generate(prompt)
+    try:
+        answer = llm.generate(prompt)
+    except Exception:
+        fallback_lines = [
+            f"- [{doc.metadata.get('target_name', '동향')}] {doc.page_content.strip()}"
+            for doc in docs[:3]
+        ]
+        answer = (
+            "⚠️ [안내] 현재 고성능 SLM(Colab GPU)이 대기 또는 프로비저닝 상태입니다.\n"
+            "지식 베이스에서 검색된 관련 동향 요약:\n\n"
+            + "\n".join(fallback_lines)
+        )
     return QueryResult(answer=answer, sources=sources)
 
 

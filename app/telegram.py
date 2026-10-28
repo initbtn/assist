@@ -99,6 +99,7 @@ def handle_telegram_update(
     sender: Callable[[str, str], None],
     article_store: InMemoryArticleStore | None = None,
     base_ui_url: str | None = None,
+    provisioner: Any | None = None,
 ) -> str:
     message = update.get("message") or {}
     chat = message.get("chat") or {}
@@ -113,6 +114,10 @@ def handle_telegram_update(
     if text.startswith("/targets"):
         reply = _format_targets_summary(target_store)
     elif text.startswith("/brief"):
+        if provisioner is not None and hasattr(provisioner, "check_health") and not provisioner.check_health():
+            sender(chat_id, "🧠 [안내] 고성능 SLM(Colab GPU)을 온디맨드로 부팅 중입니다. 준비되는 동안 검색 요약을 먼저 회신합니다.")
+            if hasattr(provisioner, "trigger_background_provision"):
+                provisioner.trigger_background_provision()
         recent_docs = retriever.search("recent", k=20)
         article = build_briefing_article(
             recent_docs,
@@ -123,6 +128,10 @@ def handle_telegram_update(
             article_store.save(article)
         reply = format_telegram_brief_message(article)
     else:
+        if provisioner is not None and hasattr(provisioner, "check_health") and not provisioner.check_health():
+            sender(chat_id, "🧠 [안내] 고성능 SLM(Colab GPU)을 온디맨드로 부팅 중입니다. 준비되는 동안 검색 요약을 먼저 회신합니다.")
+            if hasattr(provisioner, "trigger_background_provision"):
+                provisioner.trigger_background_provision()
         result = answer_question(text, retriever=retriever, llm=llm)
         if result.sources:
             sources_text = "\n".join(f"- {s}" for s in result.sources)
@@ -143,6 +152,7 @@ def process_telegram_updates_batch(
     sender: Callable[[str, str], None],
     article_store: InMemoryArticleStore | None = None,
     base_ui_url: str | None = None,
+    provisioner: Any | None = None,
 ) -> int | None:
     if not updates:
         return None
@@ -160,6 +170,7 @@ def process_telegram_updates_batch(
             sender=sender,
             article_store=article_store,
             base_ui_url=base_ui_url,
+            provisioner=provisioner,
         )
 
     return last_offset

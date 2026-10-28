@@ -299,3 +299,24 @@ def test_resolve_ollama_model_name_and_model_override_four_boundary_cases():
     assert calls[0]["model"] == "gemma3:12b"
     assert calls[1]["model"] == "hermes3:8b"
 
+
+def test_answer_question_fallback_when_llm_raises():
+    docs = [
+        Document(
+            page_content="Next.js 16 introduces Cache Components.",
+            metadata={"domain": "web", "target_name": "Next.js", "source_url": "https://nextjs.org"},
+        )
+    ]
+    retriever = FakeRetriever(docs)
+
+    class ErrorLLM:
+        def generate(self, prompt: str) -> str:
+            raise RuntimeError("Colab SLM connection error 530")
+
+    result = answer_question("Next.js 최신 동향 알려줘", retriever=retriever, llm=ErrorLLM())
+    assert result is not None
+    assert "Colab GPU" in result.answer or "대기 또는 프로비저닝" in result.answer
+    assert "Next.js 16 introduces Cache Components" in result.answer
+    assert result.sources == ["https://nextjs.org"]
+
+
