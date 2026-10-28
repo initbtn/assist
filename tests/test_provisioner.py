@@ -99,3 +99,58 @@ async def test_stop_transitions_to_idle():
         assert stopped is True
         assert prov.state == ProvisionerState.IDLE
         mock_stop.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_notifier_called_on_state_transitions():
+    notifications: list[tuple[str, str]] = []
+
+    def mock_notifier(event: str, message: str) -> None:
+        notifications.append((event, message))
+
+    prov = ColabProvisioner(
+        base_url="https://dom-slm.conn.ai.kr",
+        notifier=mock_notifier,
+    )
+
+    with patch.object(prov, "check_health", side_effect=[False, True]), \
+         patch.object(prov, "_execute_provisioning", return_value=True), \
+         patch.object(prov, "_execute_stop", return_value=True):
+
+        await prov.ensure_ready()
+        assert len(notifications) == 2
+        assert notifications[0][0] == "PROVISIONING_STARTED"
+        assert "부팅 시작" in notifications[0][1] or "🟡" in notifications[0][1]
+        assert notifications[1][0] == "PROVISIONING_READY"
+        assert "준비 완료" in notifications[1][1] or "🟢" in notifications[1][1]
+
+        await prov.stop()
+        assert len(notifications) == 3
+        assert notifications[2][0] == "SCALE_TO_ZERO"
+        assert "회수 완료" in notifications[2][1] or "⚪" in notifications[2][1]
+
+
+@pytest.mark.anyio
+async def test_notifier_called_on_provisioning_error():
+    notifications: list[tuple[str, str]] = []
+
+    def mock_notifier(event: str, message: str) -> None:
+        notifications.append((event, message))
+
+    prov = ColabProvisioner(
+        base_url="https://dom-slm.conn.ai.kr",
+        notifier=mock_notifier,
+    )
+
+    with patch.object(prov, "check_health", return_value=False), \
+         patch.object(prov, "_execute_provisioning", return_value=False):
+
+        with pytest.raises(RuntimeError):
+            await prov.ensure_ready()
+
+        assert len(notifications) >= 2
+        assert notifications[0][0] == "PROVISIONING_STARTED"
+        error_events = [n for n in notifications if n[0] == "PROVISIONING_ERROR"]
+        assert len(error_events) == 1
+        assert "🔴" in error_events[0][1] or "장애" in error_events[0][1]
+

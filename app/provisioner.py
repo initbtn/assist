@@ -10,6 +10,7 @@ import httpx
 
 from app.config import settings
 from app.security import ephemeral_colab_credentials
+from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ class ColabProvisioner:
         self,
         base_url: str | None = None,
         runner_script: str | None = None,
+        notifier: Callable[[str, str], None] | None = None,
     ) -> None:
         self.base_url = (base_url or settings.ollama_base_url).rstrip("/")
         self.runner_script = runner_script or os.path.join(
@@ -33,10 +35,18 @@ class ColabProvisioner:
             "scripts",
             "run_colab_llm.sh",
         )
+        self.notifier = notifier
         self._state = ProvisionerState.IDLE
         self._lock = asyncio.Lock()
         self._in_flight_task: asyncio.Task[bool] | None = None
         self._last_used_at: float = time.time()
+
+    def _notify(self, event: str, message: str) -> None:
+        if self.notifier is not None:
+            try:
+                self.notifier(event, message)
+            except Exception as exc:
+                logger.warning("Notifier callback failed: %s", exc)
 
     @property
     def state(self) -> ProvisionerState:
@@ -74,6 +84,7 @@ class ColabProvisioner:
                 return self.base_url
 
             self._state = ProvisionerState.PROVISIONING
+            self._notify("PROVISIONING_STARTED", "🟡 [Colab SLM] 온디맨드 인스턴스 부팅 시작 (GPU: T4)")
             logger.info("Triggering Colab on-demand provisioning...")
 
             loop = asyncio.get_running_loop()
@@ -81,13 +92,14 @@ class ColabProvisioner:
             try:
                 success = await asyncio.wait_for(self._in_flight_task, timeout=timeout_sec)
                 if not success:
-                    self._state = ProvisionerState.IDLE
-                    raise RuntimeError("Failed to provision Colab GPU instance")
+                    raise RuntimeError("인스턴스 기동 불가")
                 self._state = ProvisionerState.READY
+                self._notify("PROVISIONING_READY", f"🟢 [Colab SLM] 인스턴스 준비 완료 ({self.base_url})")
                 self._last_used_at = time.time()
                 return self.base_url
             except Exception as exc:
                 self._state = ProvisionerState.IDLE
+                self._notify("PROVISIONING_ERROR", f"🔴 [Colab SLM 장애] 프로비저닝 실패: {exc}")
                 logger.error("Error during Colab provisioning: %s", exc)
                 raise
             finally:
@@ -146,6 +158,7 @@ class ColabProvisioner:
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(None, self._execute_stop)
             self._state = ProvisionerState.IDLE
+            self._notify("SCALE_TO_ZERO", "⚪ [Colab SLM] 유휴 세션 회수 완료 (Scale-to-Zero)")
             return result
 
     def trigger_background_provision(self) -> None:
@@ -155,14 +168,21 @@ class ColabProvisioner:
             return
 
         self._state = ProvisionerState.PROVISIONING
+        self._notify("PROVISIONING_STARTED", "🟡 [Colab SLM] 온디맨드 인스턴스 부팅 시작 (GPU: T4)")
 
         def _runner() -> None:
             try:
                 success = self._provision_sync()
-                self._state = ProvisionerState.READY if success else ProvisionerState.IDLE
+                if success:
+                    self._state = ProvisionerState.READY
+                    self._notify("PROVISIONING_READY", f"🟢 [Colab SLM] 인스턴스 준비 완료 ({self.base_url})")
+                else:
+                    self._state = ProvisionerState.IDLE
+                    self._notify("PROVISIONING_ERROR", "🔴 [Colab SLM 장애] 프로비저닝 실패: 인스턴스 기동 불가")
             except Exception as exc:
                 logger.error("Background Colab provisioning failed: %s", exc)
                 self._state = ProvisionerState.IDLE
+                self._notify("PROVISIONING_ERROR", f"🔴 [Colab SLM 장애] 프로비저닝 실패: {exc}")
 
         t = threading.Thread(target=_runner, daemon=True)
         t.start()
