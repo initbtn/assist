@@ -79,12 +79,14 @@ def run_polling_worker(
         ColabProvisioner() if settings.llm_provider == "ollama" else None
     )
 
-    def _sender(chat_id: str, text: str) -> None:
+    def _sender(chat_id: str, text: str, reply_to_message_id: int | None = None) -> None:
         kwargs: dict[str, Any] = {
             "text": text,
             "bot_token": token,
             "chat_id": chat_id,
         }
+        if reply_to_message_id is not None:
+            kwargs["reply_to_message_id"] = reply_to_message_id
         if http_post is not None:
             kwargs["http_post"] = http_post
         send_telegram_message(**kwargs)

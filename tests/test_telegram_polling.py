@@ -260,8 +260,9 @@ def test_handle_telegram_update_triggers_provisioner_when_offline():
     )
 
     assert prov.triggered is True
-    assert len(sent_messages) == 2
-    assert "온디맨드로 부팅 중입니다" in sent_messages[0][1]
+    assert len(sent_messages) == 1
+    assert not any("온디맨드로 부팅 중입니다" in msg[1] for msg in sent_messages)
+    assert len(sent_messages[0][1]) > 0
 
 
 def test_polling_worker_ops_channel_isolation():
@@ -380,7 +381,8 @@ def test_polling_worker_group_mention_handling():
                 {
                     "update_id": 801,
                     "message": {
-                        "chat": {"id": -100123456789},
+                        "message_id": 8010,
+                        "chat": {"id": -100123456789, "type": "supergroup"},
                         "text": "@DomAssistBot FastAPI 최신 업데이트는?",
                     },
                 }
@@ -407,7 +409,49 @@ def test_polling_worker_group_mention_handling():
         req for req in posted_requests
         if req["payload"]["chat_id"] == "-100123456789"
     ]
-    assert len(group_responses) >= 1
-    assert any("출처:" in req["payload"]["text"] for req in group_responses)
+    assert len(group_responses) == 1
+    assert "출처:" in group_responses[0]["payload"]["text"]
+    assert group_responses[0]["payload"]["reply_to_message_id"] == 8010
+
+
+def test_polling_worker_ignores_unrelated_group_messages():
+    posted_requests = []
+
+    def mock_http_get(url: str, params: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "result": [
+                {
+                    "update_id": 901,
+                    "message": {
+                        "message_id": 9010,
+                        "chat": {"id": -100123456789, "type": "supergroup"},
+                        "text": "오늘 점심 뭐 먹을까?",
+                    },
+                }
+            ],
+        }
+
+    def mock_http_post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        posted_requests.append({"url": url, "payload": payload})
+        return {"ok": True}
+
+    exit_code = run_polling_worker(
+        bot_token="test-service-token",
+        ops_bot_token="test-ops-token",
+        ops_telegram_chat_id="admin-9999",
+        timeout=1,
+        once=True,
+        llm=MockLLM(),
+        http_get=mock_http_get,
+        http_post=mock_http_post,
+    )
+
+    assert exit_code == 0
+    group_responses = [
+        req for req in posted_requests
+        if req["payload"]["chat_id"] == "-100123456789"
+    ]
+    assert len(group_responses) == 0
 
 
