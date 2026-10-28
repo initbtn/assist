@@ -23,3 +23,4 @@
 | **warming** | pass·gpg (`DOMSTACK_WARMING` on) |
 | **Python 구조(②)** | 모듈 하나는 하나의 책임만 진다 — 수집·변환·저장·전송을 한 함수에 섞지 않는다(SRP). 설정·주소·키는 `Settings` 같은 한 곳에서 읽고, 호출부는 인자로 받는다(DIP). I/O(HTTP·DB·LLM) 호출은 얇은 함수로 분리해 테스트에서 대체하고 실호출을 하지 않는다. 공개 함수는 쓰는 인자만 받는다(ISP) |
 | **하드코딩·상수(②)** | 매직 넘버·색·URL·키·문구를 코드에 흩뿌려 박지 않는다. 같은 값이 둘 이상의 자리에 쓰이면 한 곳(상수·토큰·설정)에서 정의해 참조한다. 환경마다 다른 값은 설정·env 로 받고 시크릿은 코드에 두지 않는다 |
+| **게이트웨이·스토리지 보안(②)** | **WAS가 유일한 공개 API 게이트웨이** — 브라우저에서 Supabase DB 직접 접근/자격증명 노출 원천 금지(모든 DB 접근은 WAS 경유). 브라우저 스토리지(R2/S3) 직접 쓰기(Presigned PUT 포함) 금지 — 파일 저장은 반드시 WAS 경유 후 백엔드 SDK로 처리 ([ADR 0001](docs/architecture-decision-record/0001-was-gateway-and-storage-security.md) 준수) |
