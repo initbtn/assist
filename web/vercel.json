@@ -4,6 +4,10 @@
     {
       "source": "/articles/:slug*",
       "destination": "/article"
+    },
+    {
+      "source": "/v1/:path*",
+      "destination": "https://assist.conn.ai.kr/v1/:path*"
     }
   ]
 }

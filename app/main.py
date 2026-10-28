@@ -137,6 +137,26 @@ def verify_api_key(
     return token_rec
 
 
+def verify_admin_key(
+    x_admin_key: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
+) -> str:
+    expected_key = settings.resolved_admin_api_key().strip()
+    if not expected_key:
+        return "admin"
+    raw_key = x_admin_key
+    if not raw_key and authorization:
+        parts = authorization.strip().split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            raw_key = parts[1]
+    if not raw_key or raw_key.strip() != expected_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized admin access: invalid or missing admin key",
+        )
+    return "admin"
+
+
 
 def create_app(
     *,
@@ -381,11 +401,12 @@ def create_app(
                 detail="Invalid webhook secret token",
             )
 
-        allowed_chats = (
-            settings.resolved_telegram_allowed_chat_ids()
-            if settings.telegram_allowed_chat_ids.strip()
-            else None
-        )
+        store = TokenManager.get_store()
+        raw_env_chats = [c.strip() for c in settings.telegram_allowed_chat_ids.split(",") if c.strip()] if settings.telegram_allowed_chat_ids.strip() else []
+        app_chats = list(store.get_all_allowed_chat_ids()) if hasattr(store, "get_all_allowed_chat_ids") else []
+        effective_chats = list(set(raw_env_chats + app_chats)) if (raw_env_chats or app_chats) else None
+        colab_enabled = store.is_colab_gpu_enabled() if hasattr(store, "is_colab_gpu_enabled") else True
+
         reply = handle_telegram_update(
             update,
             target_store=t_store,
@@ -394,12 +415,13 @@ def create_app(
             sender=_send_telegram,
             article_store=a_store,
             base_ui_url=resolved_ui_url,
-            allowed_chat_ids=allowed_chats,
+            allowed_chat_ids=effective_chats,
+            enable_colab_gpu=colab_enabled,
         )
         return {"ok": True, "reply": reply}
 
     @app.post("/v1/admin/apps")
-    def create_admin_app(payload: AppCreateRequest) -> dict[str, Any]:
+    def create_admin_app(payload: AppCreateRequest, _admin_guard: str = Depends(verify_admin_key)) -> dict[str, Any]:
         store = TokenManager.get_store()
         rec = store.create_app(payload.name, payload.description)
         return {
@@ -410,7 +432,7 @@ def create_app(
         }
 
     @app.get("/v1/admin/apps")
-    def list_admin_apps() -> list[dict[str, Any]]:
+    def list_admin_apps(_admin_guard: str = Depends(verify_admin_key)) -> list[dict[str, Any]]:
         store = TokenManager.get_store()
         return [
             {
@@ -424,7 +446,11 @@ def create_app(
         ]
 
     @app.post("/v1/admin/apps/{app_id}/tokens")
-    def create_admin_app_token(app_id: str, payload: TokenCreateRequest) -> dict[str, Any]:
+    def create_admin_app_token(
+        app_id: str,
+        payload: TokenCreateRequest,
+        _admin_guard: str = Depends(verify_admin_key),
+    ) -> dict[str, Any]:
         store = TokenManager.get_store()
         app_rec = store.get_app(app_id)
         if not app_rec:
@@ -441,7 +467,10 @@ def create_app(
         }
 
     @app.get("/v1/admin/apps/{app_id}/tokens")
-    def list_admin_app_tokens(app_id: str) -> list[dict[str, Any]]:
+    def list_admin_app_tokens(
+        app_id: str,
+        _admin_guard: str = Depends(verify_admin_key),
+    ) -> list[dict[str, Any]]:
         store = TokenManager.get_store()
         tokens = store.list_tokens(app_id)
         return [
@@ -459,7 +488,10 @@ def create_app(
         ]
 
     @app.delete("/v1/admin/tokens/{token_id}")
-    def revoke_admin_token(token_id: str) -> dict[str, Any]:
+    def revoke_admin_token(
+        token_id: str,
+        _admin_guard: str = Depends(verify_admin_key),
+    ) -> dict[str, Any]:
         store = TokenManager.get_store()
         success = store.revoke_token(token_id)
         if not success:
@@ -486,7 +518,10 @@ def create_app(
         }
 
     @app.get("/v1/admin/apps/{app_id}/config")
-    def get_admin_bot_config(app_id: str) -> dict[str, Any]:
+    def get_admin_bot_config(
+        app_id: str,
+        _admin_guard: str = Depends(verify_admin_key),
+    ) -> dict[str, Any]:
         store = TokenManager.get_store()
         cfg = store.get_bot_config(app_id)
         return {
@@ -497,7 +532,11 @@ def create_app(
         }
 
     @app.put("/v1/admin/apps/{app_id}/config")
-    def update_admin_bot_config(app_id: str, payload: BotConfigUpdateRequest) -> dict[str, Any]:
+    def update_admin_bot_config(
+        app_id: str,
+        payload: BotConfigUpdateRequest,
+        _admin_guard: str = Depends(verify_admin_key),
+    ) -> dict[str, Any]:
         store = TokenManager.get_store()
         cfg = store.update_bot_config(
             app_id,

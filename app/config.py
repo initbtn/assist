@@ -85,7 +85,16 @@ class Settings(BaseSettings):
     ops_telegram_chat_id: str = ""
     telegram_webhook_secret: str = ""
     telegram_allowed_chat_ids: str = ""
+    admin_api_key: str = ""
     public_ui_base_url: str = "https://assist-brief.vercel.app"
+
+    def resolved_admin_api_key(self) -> str:
+        if self.admin_api_key.strip():
+            return self.admin_api_key.strip()
+        val = resolve_pass_secret("assist/admin-api-key")
+        if val:
+            return val
+        return self.resolved_github_token()
 
     def resolved_telegram_allowed_chat_ids(self) -> list[str]:
         raw = self.telegram_allowed_chat_ids.strip()

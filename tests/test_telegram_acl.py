@@ -85,8 +85,49 @@ def test_telegram_update_blocks_unauthorized_user_and_prevents_gpu_startup():
         article_store=article_store,
         provisioner=provisioner,
         allowed_chat_ids=["12345"],
+        enable_colab_gpu=True,
     )
 
     # Authorized user SHOULD trigger GPU provisioning if offline
     assert provisioner.triggered is True
     assert "doc1" in reply_auth
+
+
+def test_telegram_update_respects_enable_colab_gpu_false_flag():
+    sent_messages: list[tuple[str, str]] = []
+
+    def mock_sender(chat_id: str, text: str, **kwargs: Any) -> None:
+        sent_messages.append((chat_id, text))
+
+    retriever = FakeMemoryRetriever(
+        docs=[Document(page_content="doc1", metadata={"source_url": "https://example.com"})]
+    )
+    target_store = InMemoryTargetStore(seed=False)
+    article_store = InMemoryArticleStore()
+    llm = DummyLLM()
+    provisioner = DummyProvisioner(healthy=False)
+
+    update_auth = {
+        "update_id": 3,
+        "message": {
+            "message_id": 103,
+            "chat": {"id": "12345", "type": "private"},
+            "text": "오늘 기술 동향 알려줘",
+        },
+    }
+
+    reply = handle_telegram_update(
+        update_auth,
+        target_store=target_store,
+        retriever=retriever,
+        llm=llm,
+        sender=mock_sender,
+        article_store=article_store,
+        provisioner=provisioner,
+        allowed_chat_ids=["12345"],
+        enable_colab_gpu=False,
+    )
+
+    # When enable_colab_gpu is False, provisioner must NOT be triggered
+    assert provisioner.triggered is False
+    assert "doc1" in reply

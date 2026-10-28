@@ -13,6 +13,7 @@ if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
 from app.articles import InMemoryArticleStore
+from app.auth import TokenManager
 from app.collectors import seed_initial_knowledge
 from app.config import settings
 from app.provisioner import ColabProvisioner
@@ -63,15 +64,16 @@ def run_polling_worker(
         if ops_telegram_chat_id is not None
         else settings.resolved_ops_telegram_chat_id()
     ).strip()
-    allowed_chats = (
-        allowed_chat_ids
-        if allowed_chat_ids is not None
-        else (
-            settings.resolved_telegram_allowed_chat_ids()
-            if settings.telegram_allowed_chat_ids.strip()
-            else None
-        )
-    )
+    store = TokenManager.get_store()
+    raw_env_chats = [c.strip() for c in settings.telegram_allowed_chat_ids.split(",") if c.strip()] if settings.telegram_allowed_chat_ids.strip() else []
+    app_chats = list(store.get_all_allowed_chat_ids()) if hasattr(store, "get_all_allowed_chat_ids") else []
+    if allowed_chat_ids is not None:
+        allowed_chats = allowed_chat_ids
+    elif raw_env_chats or app_chats:
+        allowed_chats = list(set(raw_env_chats + app_chats))
+    else:
+        allowed_chats = None
+    colab_enabled = store.is_colab_gpu_enabled() if hasattr(store, "is_colab_gpu_enabled") else True
 
     t_store = target_store if target_store is not None else InMemoryTargetStore(seed=True)
     r_retriever = (
@@ -162,6 +164,7 @@ def run_polling_worker(
                     article_store=a_store,
                     provisioner=active_prov,
                     allowed_chat_ids=allowed_chats,
+                    enable_colab_gpu=colab_enabled,
                 )
                 if next_offset is not None:
                     offset = next_offset

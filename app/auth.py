@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
+
+logger = logging.getLogger(__name__)
 
 
 def hash_token(raw_token: str) -> str:
@@ -66,11 +69,7 @@ def generate_api_token_pair(app_id: str, name: str, ttl_days: int = 30) -> ApiTo
     api_key = f"ast_live_{raw_secret}"
     refresh_token = f"ast_ref_{raw_refresh}"
     key_prefix = api_key[:17]  # ast_live_ + 8 characters
-
-    if ttl_days >= 0:
-        expires_at = datetime.now(timezone.utc) + timedelta(days=ttl_days)
-    else:
-        expires_at = datetime.now(timezone.utc) + timedelta(days=ttl_days)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=ttl_days)
 
     return ApiTokenPair(
         id=token_id,
@@ -121,6 +120,12 @@ class TokenStoreProtocol(Protocol):
         enable_colab_gpu: bool | None = None,
         rate_limit_rpm: int | None = None,
     ) -> BotConfigRecord:
+        ...
+
+    def get_all_allowed_chat_ids(self) -> set[str]:
+        ...
+
+    def is_colab_gpu_enabled(self) -> bool:
         ...
 
 
@@ -199,11 +204,14 @@ class InMemoryTokenStore:
         old_token.is_active = False
         old_token.revoked_at = now
 
-        # Generate new token pair for the same app and name
+        # Retain original validity duration or default 30
+        delta_days = (old_token.expires_at - old_token.created_at).days
+        ttl_days = delta_days if delta_days > 0 else 30
+
         new_pair = self.create_token(
             app_id=old_token.app_id,
             name=old_token.name,
-            ttl_days=30,
+            ttl_days=ttl_days,
         )
         return new_pair
 
@@ -237,6 +245,292 @@ class InMemoryTokenStore:
             cfg.rate_limit_rpm = rate_limit_rpm
         return cfg
 
+    def get_all_allowed_chat_ids(self) -> set[str]:
+        chats: set[str] = set()
+        for cfg in self.bot_configs.values():
+            for c in cfg.allowed_chat_ids:
+                stripped = str(c).strip()
+                if stripped:
+                    chats.add(stripped)
+        return chats
+
+    def is_colab_gpu_enabled(self) -> bool:
+        if not self.bot_configs:
+            return True
+        return any(cfg.enable_colab_gpu for cfg in self.bot_configs.values())
+
+
+class PostgresTokenStore:
+    """PostgreSQL / Supabase persistent token store."""
+
+    def __init__(self, db_url: str) -> None:
+        self.db_url = db_url
+
+    def _get_connection(self) -> Any:
+        try:
+            import psycopg
+            # Clean psycopg connection string
+            clean_url = self.db_url.replace("postgresql+psycopg://", "postgresql://")
+            return psycopg.connect(clean_url)
+        except Exception as exc:
+            logger.error("Failed to connect to PostgreSQL for TokenStore: %s", exc)
+            raise
+
+    def create_app(self, name: str, description: str = "") -> AppRecord:
+        app_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO apps (id, name, description, is_active, created_at) VALUES (%s, %s, %s, %s, %s)",
+                    (app_id, name, description, True, now),
+                )
+                cur.execute(
+                    "INSERT INTO bot_configs (app_id, allowed_chat_ids, enable_colab_gpu, rate_limit_rpm) VALUES (%s, %s, %s, %s)",
+                    (app_id, [], True, 60),
+                )
+            conn.commit()
+        return AppRecord(id=app_id, name=name, description=description, is_active=True, created_at=now)
+
+    def list_apps(self) -> list[AppRecord]:
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, name, description, is_active, created_at FROM apps ORDER BY created_at DESC")
+                rows = cur.fetchall()
+        return [
+            AppRecord(
+                id=str(r[0]),
+                name=r[1],
+                description=r[2] or "",
+                is_active=bool(r[3]),
+                created_at=r[4] if isinstance(r[4], datetime) else datetime.now(timezone.utc),
+            )
+            for r in rows
+        ]
+
+    def get_app(self, app_id: str) -> AppRecord | None:
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, name, description, is_active, created_at FROM apps WHERE id = %s", (app_id,))
+                row = cur.fetchone()
+        if not row:
+            return None
+        return AppRecord(
+            id=str(row[0]),
+            name=row[1],
+            description=row[2] or "",
+            is_active=bool(row[3]),
+            created_at=row[4] if isinstance(row[4], datetime) else datetime.now(timezone.utc),
+        )
+
+    def create_token(self, app_id: str, name: str, ttl_days: int = 30) -> ApiTokenPair:
+        pair = generate_api_token_pair(app_id=app_id, name=name, ttl_days=ttl_days)
+        now = datetime.now(timezone.utc)
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO api_tokens (
+                        id, app_id, name, key_prefix, key_hash, refresh_token_hash, expires_at, is_active, created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        pair.id,
+                        pair.app_id,
+                        pair.name,
+                        pair.key_prefix,
+                        pair.key_hash,
+                        pair.refresh_token_hash,
+                        pair.expires_at,
+                        True,
+                        now,
+                    ),
+                )
+            conn.commit()
+        return pair
+
+    def list_tokens(self, app_id: str) -> list[ApiTokenRecord]:
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, app_id, name, key_prefix, key_hash, refresh_token_hash, expires_at, is_active, created_at, last_used_at, revoked_at
+                    FROM api_tokens
+                    WHERE app_id = %s AND is_active = TRUE AND revoked_at IS NULL
+                    ORDER BY created_at DESC
+                    """,
+                    (app_id,),
+                )
+                rows = cur.fetchall()
+        return [
+            ApiTokenRecord(
+                id=str(r[0]),
+                app_id=str(r[1]),
+                name=r[2],
+                key_prefix=r[3],
+                key_hash=r[4],
+                refresh_token_hash=r[5],
+                expires_at=r[6],
+                is_active=bool(r[7]),
+                created_at=r[8],
+                last_used_at=r[9],
+                revoked_at=r[10],
+            )
+            for r in rows
+        ]
+
+    def validate_api_key(self, raw_api_key: str) -> ApiTokenRecord | None:
+        cleaned = raw_api_key.strip()
+        if not cleaned:
+            return None
+        target_hash = hash_token(cleaned)
+        now = datetime.now(timezone.utc)
+
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, app_id, name, key_prefix, key_hash, refresh_token_hash, expires_at, is_active, created_at, last_used_at, revoked_at
+                    FROM api_tokens
+                    WHERE key_hash = %s AND is_active = TRUE AND revoked_at IS NULL AND expires_at >= %s
+                    """,
+                    (target_hash, now),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                token_id = row[0]
+                cur.execute("UPDATE api_tokens SET last_used_at = %s WHERE id = %s", (now, token_id))
+            conn.commit()
+
+        return ApiTokenRecord(
+            id=str(row[0]),
+            app_id=str(row[1]),
+            name=row[2],
+            key_prefix=row[3],
+            key_hash=row[4],
+            refresh_token_hash=row[5],
+            expires_at=row[6],
+            is_active=bool(row[7]),
+            created_at=row[8],
+            last_used_at=now,
+            revoked_at=row[10],
+        )
+
+    def refresh_token_pair(self, raw_refresh_token: str) -> ApiTokenPair | None:
+        cleaned = raw_refresh_token.strip()
+        if not cleaned:
+            return None
+        target_hash = hash_token(cleaned)
+        now = datetime.now(timezone.utc)
+
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, app_id, name, created_at, expires_at
+                    FROM api_tokens
+                    WHERE refresh_token_hash = %s AND is_active = TRUE AND revoked_at IS NULL
+                    """,
+                    (target_hash,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                old_id, app_id, name, created_at, expires_at = row
+                cur.execute("UPDATE api_tokens SET is_active = FALSE, revoked_at = %s WHERE id = %s", (now, old_id))
+            conn.commit()
+
+        delta_days = (expires_at - created_at).days if (expires_at and created_at) else 30
+        ttl_days = delta_days if delta_days > 0 else 30
+        return self.create_token(app_id=str(app_id), name=name, ttl_days=ttl_days)
+
+    def revoke_token(self, token_id: str) -> bool:
+        now = datetime.now(timezone.utc)
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE api_tokens SET is_active = FALSE, revoked_at = %s WHERE id = %s AND is_active = TRUE",
+                    (now, token_id),
+                )
+                updated = cur.rowcount > 0
+            conn.commit()
+        return updated
+
+    def get_bot_config(self, app_id: str) -> BotConfigRecord:
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT allowed_chat_ids, enable_colab_gpu, rate_limit_rpm FROM bot_configs WHERE app_id = %s",
+                    (app_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return BotConfigRecord(app_id=app_id)
+                return BotConfigRecord(
+                    app_id=app_id,
+                    allowed_chat_ids=row[0] or [],
+                    enable_colab_gpu=bool(row[1]),
+                    rate_limit_rpm=int(row[2] or 60),
+                )
+
+    def update_bot_config(
+        self,
+        app_id: str,
+        *,
+        allowed_chat_ids: list[str] | None = None,
+        enable_colab_gpu: bool | None = None,
+        rate_limit_rpm: int | None = None,
+    ) -> BotConfigRecord:
+        current = self.get_bot_config(app_id)
+        new_chats = allowed_chat_ids if allowed_chat_ids is not None else current.allowed_chat_ids
+        new_gpu = enable_colab_gpu if enable_colab_gpu is not None else current.enable_colab_gpu
+        new_rpm = rate_limit_rpm if rate_limit_rpm is not None else current.rate_limit_rpm
+
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO bot_configs (app_id, allowed_chat_ids, enable_colab_gpu, rate_limit_rpm, updated_at)
+                    VALUES (%s, %s, %s, %s, now())
+                    ON CONFLICT (app_id) DO UPDATE SET
+                        allowed_chat_ids = EXCLUDED.allowed_chat_ids,
+                        enable_colab_gpu = EXCLUDED.enable_colab_gpu,
+                        rate_limit_rpm = EXCLUDED.rate_limit_rpm,
+                        updated_at = now()
+                    """,
+                    (app_id, new_chats, new_gpu, new_rpm),
+                )
+            conn.commit()
+        return BotConfigRecord(
+            app_id=app_id,
+            allowed_chat_ids=new_chats,
+            enable_colab_gpu=new_gpu,
+            rate_limit_rpm=new_rpm,
+        )
+
+    def get_all_allowed_chat_ids(self) -> set[str]:
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT allowed_chat_ids FROM bot_configs")
+                rows = cur.fetchall()
+        chats: set[str] = set()
+        for r in rows:
+            for c in (r[0] or []):
+                s = str(c).strip()
+                if s:
+                    chats.add(s)
+        return chats
+
+    def is_colab_gpu_enabled(self) -> bool:
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT enable_colab_gpu FROM bot_configs")
+                rows = cur.fetchall()
+        if not rows:
+            return True
+        return any(bool(r[0]) for r in rows)
+
 
 class TokenManager:
     """Global manager singleton for token store."""
@@ -249,3 +543,7 @@ class TokenManager:
     @classmethod
     def set_store(cls, store: TokenStoreProtocol) -> None:
         cls._store = store
+
+    @classmethod
+    def reset_store(cls) -> None:
+        cls._store = InMemoryTokenStore()

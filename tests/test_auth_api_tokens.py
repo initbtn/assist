@@ -8,6 +8,7 @@ from app.auth import (
     generate_api_token_pair,
     hash_token,
 )
+from app.config import settings
 from app.main import create_app
 
 
@@ -63,29 +64,33 @@ def test_token_store_refresh_rotation():
 def test_admin_api_endpoints():
     app = create_app()
     client = TestClient(app)
+    admin_headers = {"X-Admin-Key": settings.resolved_admin_api_key()}
 
     # 1. Create app
-    resp = client.post("/v1/admin/apps", json={"name": "Alpha App", "description": "Test App"})
+    resp = client.post("/v1/admin/apps", json={"name": "Alpha App", "description": "Test App"}, headers=admin_headers)
     assert resp.status_code == 200
     app_data = resp.json()
     app_id = app_data["id"]
 
     # 2. List apps
-    resp = client.get("/v1/admin/apps")
+    resp = client.get("/v1/admin/apps", headers=admin_headers)
     assert resp.status_code == 200
     assert any(a["id"] == app_id for a in resp.json())
 
     # 3. Create token for app
-    resp = client.post(f"/v1/admin/apps/{app_id}/tokens", json={"name": "Alpha Key", "ttl_days": 30})
+    resp = client.post(
+        f"/v1/admin/apps/{app_id}/tokens",
+        json={"name": "Alpha Key", "ttl_days": 30},
+        headers=admin_headers,
+    )
     assert resp.status_code == 200
     token_data = resp.json()
     api_key = token_data["api_key"]
     refresh_token = token_data["refresh_token"]
-    token_id = token_data["id"]
     assert api_key.startswith("ast_live_")
 
     # 4. List tokens for app
-    resp = client.get(f"/v1/admin/apps/{app_id}/tokens")
+    resp = client.get(f"/v1/admin/apps/{app_id}/tokens", headers=admin_headers)
     assert resp.status_code == 200
     assert len(resp.json()) == 1
     # Plain API key must NEVER be returned in listing
@@ -114,6 +119,7 @@ def test_admin_api_endpoints():
     resp = client.put(
         f"/v1/admin/apps/{app_id}/config",
         json={"allowed_chat_ids": ["123456", "789012"], "enable_colab_gpu": True, "rate_limit_rpm": 60},
+        headers=admin_headers,
     )
     assert resp.status_code == 200
     config = resp.json()
@@ -122,6 +128,29 @@ def test_admin_api_endpoints():
 
     # 10. Revoke token
     new_token_id = new_token_data["id"]
-    resp = client.delete(f"/v1/admin/tokens/{new_token_id}")
+    resp = client.delete(f"/v1/admin/tokens/{new_token_id}", headers=admin_headers)
     assert resp.status_code == 200
     assert client.get("/v1/chat/models", headers={"X-API-Key": new_api_key}).status_code == 401
+
+
+def test_admin_api_authentication_guard(monkeypatch):
+    monkeypatch.setattr(settings, "admin_api_key", "secret-admin-pass")
+    app = create_app()
+    client = TestClient(app)
+
+    # 1. Access without Admin Key -> 401
+    resp = client.get("/v1/admin/apps")
+    assert resp.status_code == 401
+    assert "Unauthorized admin access" in resp.json()["detail"]
+
+    # 2. Access with wrong Admin Key -> 401
+    resp = client.get("/v1/admin/apps", headers={"X-Admin-Key": "wrong-key"})
+    assert resp.status_code == 401
+
+    # 3. Access with valid X-Admin-Key -> 200
+    resp = client.get("/v1/admin/apps", headers={"X-Admin-Key": "secret-admin-pass"})
+    assert resp.status_code == 200
+
+    # 4. Access with valid Bearer Authorization header -> 200
+    resp = client.get("/v1/admin/apps", headers={"Authorization": "Bearer secret-admin-pass"})
+    assert resp.status_code == 200

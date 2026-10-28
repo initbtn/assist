@@ -109,6 +109,7 @@ def handle_telegram_update(
     base_ui_url: str | None = None,
     provisioner: Any | None = None,
     allowed_chat_ids: list[str] | None = None,
+    enable_colab_gpu: bool = True,
 ) -> str:
     message = update.get("message") or {}
     chat = message.get("chat") or {}
@@ -169,7 +170,7 @@ def handle_telegram_update(
     if text.startswith("/targets"):
         reply = _format_targets_summary(target_store)
     elif text.startswith("/brief"):
-        if provisioner is not None and hasattr(provisioner, "check_health") and not provisioner.check_health():
+        if enable_colab_gpu and provisioner is not None and hasattr(provisioner, "check_health") and not provisioner.check_health():
             if hasattr(provisioner, "trigger_background_provision"):
                 provisioner.trigger_background_provision()
         recent_docs = retriever.search("recent", k=20)
@@ -182,7 +183,7 @@ def handle_telegram_update(
             article_store.save(article)
         reply = format_telegram_brief_message(article)
     else:
-        if provisioner is not None and hasattr(provisioner, "check_health") and not provisioner.check_health():
+        if enable_colab_gpu and provisioner is not None and hasattr(provisioner, "check_health") and not provisioner.check_health():
             if hasattr(provisioner, "trigger_background_provision"):
                 provisioner.trigger_background_provision()
         result = answer_question(text, retriever=retriever, llm=llm)
@@ -210,6 +211,7 @@ def process_telegram_updates_batch(
     base_ui_url: str | None = None,
     provisioner: Any | None = None,
     allowed_chat_ids: list[str] | None = None,
+    enable_colab_gpu: bool = True,
 ) -> int | None:
     if not updates:
         return None
@@ -229,6 +231,7 @@ def process_telegram_updates_batch(
             base_ui_url=base_ui_url,
             provisioner=provisioner,
             allowed_chat_ids=allowed_chat_ids,
+            enable_colab_gpu=enable_colab_gpu,
         )
 
     return last_offset

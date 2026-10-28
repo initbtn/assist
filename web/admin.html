@@ -296,6 +296,7 @@
         <h1>assist Cloud Console</h1>
       </div>
       <div class="nav-links">
+        <a href="javascript:void(0)" onclick="resetAdminKey()" style="color:var(--muted); font-size:0.85rem;">🔑 Admin Key 변경</a>
         <a href="/">← 브리핑 뷰어로 돌아가기</a>
       </div>
     </header>
@@ -489,11 +490,38 @@
     function openCreateAppModal() { openModal('create-app-modal'); }
     function openCreateTokenModal() { openModal('create-token-modal'); }
 
+    function getAdminKey() {
+      return sessionStorage.getItem('assist_admin_key') || '';
+    }
+
+    function setAdminKey(key) {
+      if (key) sessionStorage.setItem('assist_admin_key', key.trim());
+      else sessionStorage.removeItem('assist_admin_key');
+    }
+
+    function resetAdminKey() {
+      const key = prompt('새 Admin API Key를 입력하세요:', getAdminKey());
+      if (key !== null) {
+        setAdminKey(key);
+        loadApps();
+      }
+    }
+
     async function fetchJson(path, options = {}) {
-      const res = await fetch(path, {
-        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-        ...options,
-      });
+      const adminKey = getAdminKey();
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(adminKey ? { 'X-Admin-Key': adminKey } : {}),
+        ...(options.headers || {}),
+      };
+      const res = await fetch(path, { ...options, headers });
+      if (res.status === 401 && path.startsWith('/v1/admin')) {
+        const key = prompt('🔑 관리자 인증이 필요합니다. Admin Key를 입력하세요:');
+        if (key) {
+          setAdminKey(key);
+          return fetchJson(path, options);
+        }
+      }
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || res.statusText);
