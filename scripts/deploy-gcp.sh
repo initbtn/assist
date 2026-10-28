@@ -83,6 +83,8 @@ tar -C "${REPO_ROOT}" -czf - \
   printf 'OLLAMA_BASE_URL=%s\n' "${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
   printf 'OLLAMA_MODEL_NAME=%s\n' "${OLLAMA_MODEL_NAME:-gemma3:12b}"
   printf 'USE_PGVECTOR=%s\n' "${USE_PGVECTOR:-false}"
+  printf 'GCP_PROJECT=%s\n' "${GCP_PROJECT:-initbtn-510706}"
+  printf 'GCP_COLAB_SECRET_NAME=%s\n' "${GCP_COLAB_SECRET_NAME:-assist-colab-credentials}"
 } | gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command="
   set -euo pipefail
   TMP_ENV=\"/dev/shm/assist-env.\$\$\"

@@ -34,6 +34,16 @@ def fetch_raw_colab_secrets() -> dict[str, str]:
     # 1. Check GCP Secret Manager if google-cloud-secret-manager is installed
     secret_name = os.getenv("GCP_COLAB_SECRET_NAME", "assist-colab-credentials")
     gcp_project = os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+    if not gcp_project:
+        try:
+            import google.auth  # type: ignore
+
+            _, default_project = google.auth.default()
+            if default_project:
+                gcp_project = str(default_project).strip()
+        except Exception:
+            pass
+
     if gcp_project:
         try:
             from google.cloud import secretmanager  # type: ignore
