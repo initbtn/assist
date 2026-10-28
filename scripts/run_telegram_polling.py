@@ -36,6 +36,7 @@ def run_polling_worker(
     bot_token: str | None = None,
     ops_bot_token: str | None = None,
     ops_telegram_chat_id: str | None = None,
+    allowed_chat_ids: list[str] | None = None,
     timeout: int = 30,
     poll_interval: float = 1.0,
     once: bool = False,
@@ -62,6 +63,15 @@ def run_polling_worker(
         if ops_telegram_chat_id is not None
         else settings.resolved_ops_telegram_chat_id()
     ).strip()
+    allowed_chats = (
+        allowed_chat_ids
+        if allowed_chat_ids is not None
+        else (
+            settings.resolved_telegram_allowed_chat_ids()
+            if settings.telegram_allowed_chat_ids.strip()
+            else None
+        )
+    )
 
     t_store = target_store if target_store is not None else InMemoryTargetStore(seed=True)
     r_retriever = (
@@ -151,6 +161,7 @@ def run_polling_worker(
                     sender=_sender,
                     article_store=a_store,
                     provisioner=active_prov,
+                    allowed_chat_ids=allowed_chats,
                 )
                 if next_offset is not None:
                     offset = next_offset

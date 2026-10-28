@@ -84,7 +84,17 @@ class Settings(BaseSettings):
     ops_telegram_bot_token: str = ""
     ops_telegram_chat_id: str = ""
     telegram_webhook_secret: str = ""
+    telegram_allowed_chat_ids: str = ""
     public_ui_base_url: str = "https://assist-brief.vercel.app"
+
+    def resolved_telegram_allowed_chat_ids(self) -> list[str]:
+        raw = self.telegram_allowed_chat_ids.strip()
+        if raw:
+            return [c.strip() for c in raw.split(",") if c.strip()]
+        primary = self.resolved_telegram_chat_id()
+        if primary:
+            return [primary]
+        return []
 
     def resolved_github_token(self) -> str:
         if self.github_token.strip():

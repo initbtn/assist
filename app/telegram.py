@@ -108,6 +108,7 @@ def handle_telegram_update(
     article_store: InMemoryArticleStore | None = None,
     base_ui_url: str | None = None,
     provisioner: Any | None = None,
+    allowed_chat_ids: list[str] | None = None,
 ) -> str:
     message = update.get("message") or {}
     chat = message.get("chat") or {}
@@ -144,6 +145,16 @@ def handle_telegram_update(
     if is_group and not (is_command or has_mention or is_reply_to_bot):
         logger.debug("Group message ignored: not targeted to bot")
         return ""
+
+    # Check authorization whitelist if specified
+    if allowed_chat_ids and chat_id not in allowed_chat_ids:
+        logger.warning("Unauthorized telegram chat_id blocked: %s", chat_id)
+        reply = "⚠️ 접근 권한이 없습니다. 관리자에게 문의하세요."
+        try:
+            sender(chat_id, reply, reply_to_message_id=reply_to_id)
+        except TypeError:
+            sender(chat_id, reply)
+        return reply
 
     # Strip bot mention in group chats (e.g. /command@DomAssistBot -> /command, @DomAssistBot query -> query)
     text = re.sub(r"^(/[a-zA-Z0-9_]+)@\w+", r"\1", raw_text)
@@ -198,6 +209,7 @@ def process_telegram_updates_batch(
     article_store: InMemoryArticleStore | None = None,
     base_ui_url: str | None = None,
     provisioner: Any | None = None,
+    allowed_chat_ids: list[str] | None = None,
 ) -> int | None:
     if not updates:
         return None
@@ -216,6 +228,7 @@ def process_telegram_updates_batch(
             article_store=article_store,
             base_ui_url=base_ui_url,
             provisioner=provisioner,
+            allowed_chat_ids=allowed_chat_ids,
         )
 
     return last_offset
