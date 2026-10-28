@@ -77,6 +77,8 @@ tar -C "${REPO_ROOT}" -czf - \
 {
   printf 'TELEGRAM_BOT_TOKEN=%s\n' "$(pass show telegram/domAssistBot/bot-token | head -n1)"
   printf 'TELEGRAM_CHAT_ID=%s\n' "$(pass show telegram/domAssistBot/chat-id | head -n1)"
+  printf 'OPS_TELEGRAM_BOT_TOKEN=%s\n' "$(pass show telegram/bot-token | head -n1)"
+  printf 'OPS_TELEGRAM_CHAT_ID=%s\n' "$(pass show telegram/chat-id | head -n1)"
   printf 'GITHUB_TOKEN=%s\n' "$(pass show github/gh-token | head -n1)"
   printf 'OLLAMA_BASE_URL=%s\n' "${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
   printf 'OLLAMA_MODEL_NAME=%s\n' "${OLLAMA_MODEL_NAME:-gemma3:12b}"
