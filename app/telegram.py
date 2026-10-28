@@ -1,3 +1,4 @@
+import logging
 import re
 from collections import defaultdict
 from typing import Any, Callable
@@ -12,6 +13,9 @@ from app.articles import (
 from app.config import settings
 from app.rag import LLMProtocol, RetrieverProtocol, answer_question
 from app.targets import InMemoryTargetStore
+
+logger = logging.getLogger(__name__)
+DEFAULT_BOT_USERNAME = "DomAssistBot"
 
 
 def _default_http_post(url: str, json_payload: dict[str, Any]) -> dict[str, Any]:
@@ -32,6 +36,7 @@ def send_telegram_message(
     *,
     bot_token: str,
     chat_id: str,
+    reply_to_message_id: int | None = None,
     http_post: Callable[[str, dict[str, Any]], dict[str, Any]] = _default_http_post,
 ) -> dict[str, Any]:
     cleaned_token = bot_token.strip()
@@ -46,11 +51,13 @@ def send_telegram_message(
         raise ValueError("text must not be empty")
 
     url = f"https://api.telegram.org/bot{cleaned_token}/sendMessage"
-    payload = {
+    payload: dict[str, Any] = {
         "chat_id": cleaned_chat,
         "text": cleaned_text,
         "disable_web_page_preview": True,
     }
+    if reply_to_message_id is not None:
+        payload["reply_to_message_id"] = reply_to_message_id
     return http_post(url, payload)
 
 
@@ -105,15 +112,43 @@ def handle_telegram_update(
     message = update.get("message") or {}
     chat = message.get("chat") or {}
     chat_id = str(chat.get("id") or "").strip()
+    chat_type = str(chat.get("type") or "private").lower()
     raw_text = str(message.get("text") or "").strip()
+    message_id = message.get("message_id")
 
     if not chat_id or not raw_text:
+        return ""
+
+    is_group = chat_type in ("group", "supergroup")
+    reply_to_id = message_id if is_group else None
+
+    # Check if message targets the bot in group chats:
+    # 1. Command (/brief, /targets)
+    # 2. Mention (@DomAssistBot)
+    # 3. Direct reply to bot's message
+    is_command = raw_text.startswith("/")
+    has_mention = bool(
+        re.search(rf"@{DEFAULT_BOT_USERNAME}\b", raw_text, flags=re.IGNORECASE)
+        or any(
+            entity.get("type") == "mention"
+            and f"@{DEFAULT_BOT_USERNAME}".lower() in raw_text[entity.get("offset", 0):entity.get("offset", 0) + entity.get("length", 0)].lower()
+            for entity in message.get("entities", [])
+        )
+    )
+    is_reply_to_bot = False
+    reply_to = message.get("reply_to_message") or {}
+    reply_from = reply_to.get("from") or {}
+    if reply_from.get("is_bot") and (reply_from.get("username") or "").lower() == DEFAULT_BOT_USERNAME.lower():
+        is_reply_to_bot = True
+
+    if is_group and not (is_command or has_mention or is_reply_to_bot):
+        logger.debug("Group message ignored: not targeted to bot")
         return ""
 
     # Strip bot mention in group chats (e.g. /command@DomAssistBot -> /command, @DomAssistBot query -> query)
     text = re.sub(r"^(/[a-zA-Z0-9_]+)@\w+", r"\1", raw_text)
     text = re.sub(r"^@\w+[\s,:]*", "", text).strip()
-    text = re.sub(r"@DomAssistBot\b", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(rf"@{DEFAULT_BOT_USERNAME}\b", "", text, flags=re.IGNORECASE).strip()
 
     if not text:
         return ""
@@ -124,7 +159,6 @@ def handle_telegram_update(
         reply = _format_targets_summary(target_store)
     elif text.startswith("/brief"):
         if provisioner is not None and hasattr(provisioner, "check_health") and not provisioner.check_health():
-            sender(chat_id, "🧠 [안내] 고성능 SLM(Colab GPU)을 온디맨드로 부팅 중입니다. 준비되는 동안 검색 요약을 먼저 회신합니다.")
             if hasattr(provisioner, "trigger_background_provision"):
                 provisioner.trigger_background_provision()
         recent_docs = retriever.search("recent", k=20)
@@ -138,7 +172,6 @@ def handle_telegram_update(
         reply = format_telegram_brief_message(article)
     else:
         if provisioner is not None and hasattr(provisioner, "check_health") and not provisioner.check_health():
-            sender(chat_id, "🧠 [안내] 고성능 SLM(Colab GPU)을 온디맨드로 부팅 중입니다. 준비되는 동안 검색 요약을 먼저 회신합니다.")
             if hasattr(provisioner, "trigger_background_provision"):
                 provisioner.trigger_background_provision()
         result = answer_question(text, retriever=retriever, llm=llm)
@@ -148,7 +181,10 @@ def handle_telegram_update(
         else:
             reply = result.answer
 
-    sender(chat_id, reply)
+    try:
+        sender(chat_id, reply, reply_to_message_id=reply_to_id)
+    except TypeError:
+        sender(chat_id, reply)
     return reply
 
 
