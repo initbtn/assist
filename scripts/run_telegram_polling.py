@@ -13,9 +13,10 @@ if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
 from app.articles import InMemoryArticleStore
+from app.collectors import seed_initial_knowledge
 from app.config import settings
 from app.rag import FakeMemoryRetriever, LLMProtocol, PGVectorRetriever, RetrieverProtocol, get_llm
-from app.targets import InMemoryTargetStore
+from app.targets import InMemoryDeduplicationStore, InMemoryTargetStore
 from app.telegram import (
     fetch_telegram_updates,
     process_telegram_updates_batch,
@@ -53,6 +54,10 @@ def run_polling_worker(
         if retriever is not None
         else (PGVectorRetriever() if settings.use_pgvector else FakeMemoryRetriever())
     )
+    if isinstance(r_retriever, FakeMemoryRetriever) and not r_retriever.docs:
+        d_store = InMemoryDeduplicationStore()
+        seeded_count = seed_initial_knowledge(vector_store=r_retriever, dedup_store=d_store)
+        logger.info("Seeded %d initial chunks into knowledge base", seeded_count)
     a_store = article_store if article_store is not None else InMemoryArticleStore()
     active_llm = llm if llm is not None else get_llm(settings)
 

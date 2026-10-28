@@ -1,6 +1,48 @@
 {
   "articles": [
     {
+      "slug": "2026-10-28",
+      "date": "2026-10-28",
+      "title": "2026-10-28 개발 기술 동향 브리핑",
+      "summary_lines": [
+        "[AI/SLM] Colab T4 GPU 기반 Gemma 3 12B 경량 모델 추론 파이프라인 및 Cloudflare Zero-Trust 터널 연동 완료",
+        "[인프라/보안] GCP marine-edge-pc 8001 포트 비활성화 및 텔레그램 아웃바운드 롱폴링 데몬 기반 무인바운드 보안 확립",
+        "[RAG/지식베이스] 온디바이스 에이전트 자동 시딩 및 Vercel 기술 동향 브리핑 웹 아카이브 연계"
+      ],
+      "sections": [
+        {
+          "domain": "ai_agent_llm",
+          "domain_label": "AI 에이전트 & SLM",
+          "items": [
+            {
+              "target_name": "Gemma 3 12B",
+              "title": "Gemma 3 12B Colab GPU 추론 파이프라인",
+              "summary": "Google Gemma 3 12B 모델을 Colab Tesla T4 GPU(15GB VRAM) 환경에서 llamacpp 러너로 100% GPU 적재하여 25 tokens/s 속도로 한국어 3줄 요약 브리핑 서빙.",
+              "source_url": "https://colab.research.google.com"
+            },
+            {
+              "target_name": "Cloudflare Tunnel",
+              "title": "Zero-Trust Named Tunnel 연동",
+              "summary": "Cloudflare Named Tunnel(dom-slm.conn.ai.kr)을 통해 인바운드 포트 개방 없이 안전한 종단간 TLS 암호화 모델 서빙 파이프라인 구축.",
+              "source_url": "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/"
+            }
+          ]
+        },
+        {
+          "domain": "infra_devops",
+          "domain_label": "인프라 & 보안",
+          "items": [
+            {
+              "target_name": "GCP marine-edge-pc",
+              "title": "아웃바운드 전용 텔레그램 봇 데몬",
+              "summary": "GCP 방화벽 8001 포트를 닫고 Telegram getUpdates 롱폴링 데몬 컨테이너(assist-bot)를 가동하여 인바운드 공격 표면 0개 달성 및 스왑 메모리 완전 퍼지.",
+              "source_url": "https://cloud.google.com/compute"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "slug": "2026-10-23",
       "date": "2026-10-23",
       "title": "2026-10-23 개발 기술 동향 브리핑",

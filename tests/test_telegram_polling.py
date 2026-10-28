@@ -181,3 +181,40 @@ def test_run_polling_worker_once():
     assert exit_code == 0
     assert len(sent_messages) == 1
     assert sent_messages[0]["chat_id"] == "888"
+
+
+def test_run_polling_worker_seeds_initial_knowledge_by_default():
+    sent_messages = []
+
+    def mock_http_get(url: str, params: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "result": [
+                {
+                    "update_id": 400,
+                    "message": {
+                        "chat": {"id": 888},
+                        "text": "FastAPI 최신 업데이트는?",
+                    },
+                }
+            ],
+        }
+
+    def mock_http_post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        sent_messages.append(payload)
+        return {"ok": True}
+
+    exit_code = run_polling_worker(
+        bot_token="test-bot-token",
+        timeout=1,
+        once=True,
+        llm=MockLLM(),
+        http_get=mock_http_get,
+        http_post=mock_http_post,
+    )
+
+    assert exit_code == 0
+    assert len(sent_messages) == 1
+    assert "저장된 지식 베이스에서 관련된 동향 문서를 찾지 못했습니다." not in sent_messages[0]["text"]
+    assert "출처:" in sent_messages[0]["text"]
+
