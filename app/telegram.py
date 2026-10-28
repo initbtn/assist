@@ -1,3 +1,4 @@
+import re
 from collections import defaultdict
 from typing import Any, Callable
 
@@ -104,9 +105,17 @@ def handle_telegram_update(
     message = update.get("message") or {}
     chat = message.get("chat") or {}
     chat_id = str(chat.get("id") or "").strip()
-    text = str(message.get("text") or "").strip()
+    raw_text = str(message.get("text") or "").strip()
 
-    if not chat_id or not text:
+    if not chat_id or not raw_text:
+        return ""
+
+    # Strip bot mention in group chats (e.g. /command@DomAssistBot -> /command, @DomAssistBot query -> query)
+    text = re.sub(r"^(/[a-zA-Z0-9_]+)@\w+", r"\1", raw_text)
+    text = re.sub(r"^@\w+[\s,:]*", "", text).strip()
+    text = re.sub(r"@DomAssistBot\b", "", text, flags=re.IGNORECASE).strip()
+
+    if not text:
         return ""
 
     ui_url = (base_ui_url or settings.public_ui_base_url).strip()

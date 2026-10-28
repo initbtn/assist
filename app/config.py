@@ -45,13 +45,14 @@ def _default_pass_runner(key_path: str) -> str:
 def resolve_pass_secret(
     key_path: str,
     *,
-    runner: Callable[[str], str] = _default_pass_runner,
+    runner: Callable[[str], str] | None = None,
 ) -> str:
     cleaned_key = key_path.strip()
     if not cleaned_key:
         raise ValueError("key_path must not be empty")
     try:
-        raw = runner(cleaned_key)
+        active_runner = runner if runner is not None else _default_pass_runner
+        raw = active_runner(cleaned_key)
     except Exception:
         return ""
     for line in raw.splitlines():
@@ -80,6 +81,8 @@ class Settings(BaseSettings):
     github_token: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    ops_telegram_bot_token: str = ""
+    ops_telegram_chat_id: str = ""
     telegram_webhook_secret: str = ""
     public_ui_base_url: str = "https://assist-brief.vercel.app"
 
@@ -97,6 +100,16 @@ class Settings(BaseSettings):
         if self.telegram_chat_id.strip():
             return self.telegram_chat_id.strip()
         return resolve_pass_secret("telegram/domAssistBot/chat-id")
+
+    def resolved_ops_telegram_bot_token(self) -> str:
+        if self.ops_telegram_bot_token.strip():
+            return self.ops_telegram_bot_token.strip()
+        return resolve_pass_secret("telegram/bot-token")
+
+    def resolved_ops_telegram_chat_id(self) -> str:
+        if self.ops_telegram_chat_id.strip():
+            return self.ops_telegram_chat_id.strip()
+        return resolve_pass_secret("telegram/chat-id")
 
 
 settings = Settings()

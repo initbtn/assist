@@ -206,6 +206,8 @@ def test_run_polling_worker_seeds_initial_knowledge_by_default():
 
     exit_code = run_polling_worker(
         bot_token="test-bot-token",
+        ops_bot_token="test-ops-token",
+        ops_telegram_chat_id="admin-chat-id",
         timeout=1,
         once=True,
         llm=MockLLM(),
@@ -260,5 +262,152 @@ def test_handle_telegram_update_triggers_provisioner_when_offline():
     assert prov.triggered is True
     assert len(sent_messages) == 2
     assert "온디맨드로 부팅 중입니다" in sent_messages[0][1]
+
+
+def test_polling_worker_ops_channel_isolation():
+    posted_requests = []
+
+    def mock_http_get(url: str, params: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "result": [
+                {
+                    "update_id": 601,
+                    "message": {
+                        "chat": {"id": 888},
+                        "text": "FastAPI 최신 업데이트는?",
+                    },
+                }
+            ],
+        }
+
+    def mock_http_post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        posted_requests.append({"url": url, "payload": payload})
+        return {"ok": True}
+
+    # 1. When ops_bot_token and ops_telegram_chat_id are provided:
+    # User message sent via service bot token to chat 888
+    # Ops alert sent via ops bot token to ops chat 9999
+    exit_code = run_polling_worker(
+        bot_token="test-service-token",
+        ops_bot_token="test-ops-token",
+        ops_telegram_chat_id="admin-9999",
+        timeout=1,
+        once=True,
+        llm=MockLLM(),
+        http_get=mock_http_get,
+        http_post=mock_http_post,
+    )
+
+    assert exit_code == 0
+    assert len(posted_requests) >= 2
+
+    user_requests = [
+        req for req in posted_requests
+        if req["payload"]["chat_id"] == "888"
+    ]
+    ops_requests = [
+        req for req in posted_requests
+        if req["payload"]["chat_id"] == "admin-9999"
+    ]
+
+    assert len(user_requests) >= 1
+    assert all(req["url"] == "https://api.telegram.org/bottest-service-token/sendMessage" for req in user_requests)
+    assert any("출처:" in req["payload"]["text"] for req in user_requests)
+
+    assert len(ops_requests) >= 1
+    for req in ops_requests:
+        assert "https://api.telegram.org/bottest-ops-token/sendMessage" == req["url"]
+        assert any(icon in req["payload"]["text"] for icon in ["🟡", "🟢", "⚪", "🔴", "부팅"])
+
+    # Verify service bot token NEVER sent to admin-9999
+    assert all(
+        req["url"] != "https://api.telegram.org/bottest-service-token/sendMessage"
+        for req in ops_requests
+    )
+
+
+def test_polling_worker_ops_alert_skipped_when_ops_token_missing(monkeypatch):
+    posted_requests = []
+
+    def mock_http_get(url: str, params: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "result": [
+                {
+                    "update_id": 701,
+                    "message": {
+                        "chat": {"id": 888},
+                        "text": "FastAPI 최신 업데이트는?",
+                    },
+                }
+            ],
+        }
+
+    def mock_http_post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        posted_requests.append({"url": url, "payload": payload})
+        return {"ok": True}
+
+    monkeypatch.setattr("app.config.Settings.resolved_ops_telegram_bot_token", lambda self: "")
+    monkeypatch.setattr("app.config.Settings.resolved_ops_telegram_chat_id", lambda self: "")
+
+    exit_code = run_polling_worker(
+        bot_token="test-service-token",
+        ops_bot_token="",
+        ops_telegram_chat_id="",
+        timeout=1,
+        once=True,
+        llm=MockLLM(),
+        http_get=mock_http_get,
+        http_post=mock_http_post,
+    )
+
+    assert exit_code == 0
+    # Only user response should be sent via service bot; no ops alerts should be sent
+    assert len(posted_requests) >= 1
+    assert all(req["payload"]["chat_id"] == "888" for req in posted_requests)
+    assert all("bottest-service-token" in req["url"] for req in posted_requests)
+    assert not any("🟡" in req["payload"]["text"] or "부팅 시작" in req["payload"]["text"] for req in posted_requests)
+
+
+def test_polling_worker_group_mention_handling():
+    posted_requests = []
+
+    def mock_http_get(url: str, params: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "result": [
+                {
+                    "update_id": 801,
+                    "message": {
+                        "chat": {"id": -100123456789},
+                        "text": "@DomAssistBot FastAPI 최신 업데이트는?",
+                    },
+                }
+            ],
+        }
+
+    def mock_http_post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        posted_requests.append({"url": url, "payload": payload})
+        return {"ok": True}
+
+    exit_code = run_polling_worker(
+        bot_token="test-service-token",
+        ops_bot_token="test-ops-token",
+        ops_telegram_chat_id="admin-9999",
+        timeout=1,
+        once=True,
+        llm=MockLLM(),
+        http_get=mock_http_get,
+        http_post=mock_http_post,
+    )
+
+    assert exit_code == 0
+    group_responses = [
+        req for req in posted_requests
+        if req["payload"]["chat_id"] == "-100123456789"
+    ]
+    assert len(group_responses) >= 1
+    assert any("출처:" in req["payload"]["text"] for req in group_responses)
 
 
