@@ -13,6 +13,20 @@ def zeroize_bytearray(buf: bytearray) -> None:
         buf[i] = 0
 
 
+def shred_file(path: str) -> None:
+    if not os.path.exists(path):
+        return
+    try:
+        size = os.path.getsize(path)
+        with open(path, "wb") as f:
+            f.write(b"\x00" * size)
+            f.flush()
+            os.fsync(f.fileno())
+        os.remove(path)
+    except Exception as exc:
+        logger.debug("Failed to shred file %s: %s", path, exc)
+
+
 def fetch_raw_colab_secrets() -> dict[str, str]:
     token_json = ""
     cf_token = ""
@@ -83,7 +97,9 @@ class EphemeralColabAuth:
 
 
 @contextmanager
-def ephemeral_colab_credentials() -> Generator[EphemeralColabAuth, None, None]:
+def ephemeral_colab_credentials(
+    target_token_path: str | None = None,
+) -> Generator[EphemeralColabAuth, None, None]:
     raw = fetch_raw_colab_secrets()
     token_str = raw.get("token_json", "")
     cf_token_str = raw.get("cf_token", "")
@@ -96,8 +112,23 @@ def ephemeral_colab_credentials() -> Generator[EphemeralColabAuth, None, None]:
     del cf_token_str
     del raw
 
+    token_path = target_token_path or os.path.expanduser("~/.config/colab-cli/token.json")
+    created_temp_file = False
+
+    if token_b and not os.path.exists(token_path):
+        try:
+            os.makedirs(os.path.dirname(token_path), mode=0o700, exist_ok=True)
+            with open(token_path, "wb") as f:
+                f.write(token_b)
+            os.chmod(token_path, 0o600)
+            created_temp_file = True
+        except Exception as exc:
+            logger.debug("Could not write temporary colab token file: %s", exc)
+
     auth = EphemeralColabAuth(token_b, cf_token_b)
     try:
         yield auth
     finally:
         auth.zeroize()
+        if created_temp_file:
+            shred_file(token_path)

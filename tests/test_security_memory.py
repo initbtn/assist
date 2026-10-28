@@ -70,3 +70,24 @@ def test_ephemeral_colab_credentials_zeroizes_on_exception():
         assert captured_auth.is_active is False
         assert all(b == 0 for b in captured_auth.token_bytes)
         assert all(b == 0 for b in captured_auth.cf_token_bytes)
+
+
+def test_ephemeral_colab_credentials_materializes_and_shreds_temp_file(tmp_path):
+    target_token_file = str(tmp_path / "colab" / "token.json")
+    fake_token_json = '{"refresh_token": "shred_test_secret"}'
+
+    with patch("app.security.fetch_raw_colab_secrets") as mock_fetch:
+        mock_fetch.return_value = {
+            "token_json": fake_token_json,
+            "cf_token": "test_cf",
+        }
+
+        assert not os.path.exists(target_token_file)
+        with ephemeral_colab_credentials(target_token_path=target_token_file) as auth:
+            assert os.path.exists(target_token_file)
+            with open(target_token_file, "r") as f:
+                assert "shred_test_secret" in f.read()
+
+        # After exiting context, file must be shredded and unlinked
+        assert not os.path.exists(target_token_file)
+

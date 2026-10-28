@@ -58,6 +58,38 @@ async def test_ensure_ready_deduplicates_concurrent_calls():
 
 
 @pytest.mark.anyio
+async def test_ensure_ready_concurrent_failure_propagates_error():
+    prov = ColabProvisioner(base_url="https://dom-slm.conn.ai.kr")
+
+    async def fake_fail_spawn():
+        await asyncio.sleep(0.05)
+        return False
+
+    with patch.object(prov, "check_health", return_value=False), \
+         patch.object(prov, "_execute_provisioning", side_effect=fake_fail_spawn):
+
+        results = await asyncio.gather(
+            prov.ensure_ready(),
+            prov.ensure_ready(),
+            return_exceptions=True,
+        )
+
+        assert all(isinstance(r, RuntimeError) for r in results)
+        assert prov.state == ProvisionerState.IDLE
+
+
+def test_trigger_background_provision_state_transitions():
+    import time
+    prov = ColabProvisioner(base_url="https://dom-slm.conn.ai.kr")
+    assert prov.state == ProvisionerState.IDLE
+
+    with patch.object(prov, "_provision_sync", return_value=True):
+        prov.trigger_background_provision()
+        time.sleep(0.1)
+        assert prov.state == ProvisionerState.READY
+
+
+@pytest.mark.anyio
 async def test_stop_transitions_to_idle():
     prov = ColabProvisioner(base_url="https://dom-slm.conn.ai.kr")
     prov._state = ProvisionerState.READY

@@ -60,7 +60,9 @@ class ColabProvisioner:
 
         if self._state == ProvisionerState.PROVISIONING and self._in_flight_task is not None:
             logger.info("Awaiting in-flight Colab provisioning task...")
-            await self._in_flight_task
+            success = await self._in_flight_task
+            if not success or self._state != ProvisionerState.READY:
+                raise RuntimeError("Concurrent Colab provisioning failed")
             self._last_used_at = time.time()
             return self.base_url
 
@@ -148,9 +150,21 @@ class ColabProvisioner:
 
     def trigger_background_provision(self) -> None:
         import threading
+
         if self._state in (ProvisionerState.PROVISIONING, ProvisionerState.READY):
             return
-        t = threading.Thread(target=self._provision_sync, daemon=True)
+
+        self._state = ProvisionerState.PROVISIONING
+
+        def _runner() -> None:
+            try:
+                success = self._provision_sync()
+                self._state = ProvisionerState.READY if success else ProvisionerState.IDLE
+            except Exception as exc:
+                logger.error("Background Colab provisioning failed: %s", exc)
+                self._state = ProvisionerState.IDLE
+
+        t = threading.Thread(target=_runner, daemon=True)
         t.start()
 
     def _execute_stop(self) -> bool:

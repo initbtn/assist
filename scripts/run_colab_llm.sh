@@ -121,9 +121,9 @@ if [[ "${PORT_FORWARD}" == "true" ]]; then
   echo "Run assist with OLLAMA_BASE_URL=http://localhost:11434"
   "${COLAB_BIN}" ssh -- -N -L 11434:localhost:11434
 else
-  CF_TOKEN="$(pass show cloudflare/colab-tunnel-token 2>/dev/null | head -n1 || true)"
+  CF_TOKEN="${CLOUDFLARE_TUNNEL_TOKEN:-$(pass show cloudflare/colab-tunnel-token 2>/dev/null | head -n1 || true)}"
   if [[ -n "${CF_TOKEN}" ]]; then
-    echo "[3/3] Starting Cloudflare Named Tunnel (token from pass)..."
+    echo "[3/3] Starting Cloudflare Named Tunnel (token from env/pass)..."
     python3 -c "
 import sys, subprocess
 token = sys.stdin.read().strip()
