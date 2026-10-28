@@ -101,7 +101,7 @@ import subprocess, sys
 
 script = """
 set -euo pipefail
-sudo apt-get update -qq && sudo apt-get install -y -qq zstd curl
+sudo apt-get update -qq && sudo apt-get install -y -qq zstd curl pciutils
 curl -fsSL https://ollama.com/install.sh | sh
 nohup env OLLAMA_HOST=0.0.0.0 OLLAMA_ORIGINS=* ollama serve > /tmp/ollama.log 2>&1 &
 sleep 4

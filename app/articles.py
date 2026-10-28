@@ -174,7 +174,10 @@ def build_briefing_article(
             "아래 수집된 기술 동향을 바탕으로 오늘의 핵심 동향을 정확히 3줄(1. / 2. / 3.)로만 요약하세요.\n\n"
             + "\n".join(context_lines)
         )
-        raw_llm_summary = llm.generate(prompt)
+        try:
+            raw_llm_summary = llm.generate(prompt)
+        except Exception:
+            raw_llm_summary = ""
 
     summary_lines = extract_three_line_summary(
         raw_llm_summary,
