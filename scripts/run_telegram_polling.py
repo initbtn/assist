@@ -76,6 +76,18 @@ def run_polling_worker(
             kwargs["http_post"] = http_post
         send_telegram_message(**kwargs)
 
+    admin_chat_id = settings.resolved_telegram_chat_id()
+
+    def _admin_notifier(event: str, message: str) -> None:
+        if admin_chat_id:
+            try:
+                _sender(admin_chat_id, message)
+            except Exception as exc:
+                logger.warning("Failed to send admin notification: %s", exc)
+
+    if active_prov is not None and getattr(active_prov, "notifier", None) is None:
+        active_prov.notifier = _admin_notifier
+
     offset: int | None = None
     logger.info("Starting Telegram outbound long polling worker...")
 

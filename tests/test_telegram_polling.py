@@ -214,9 +214,13 @@ def test_run_polling_worker_seeds_initial_knowledge_by_default():
     )
 
     assert exit_code == 0
-    assert len(sent_messages) in (1, 2)
-    assert "저장된 지식 베이스에서 관련된 동향 문서를 찾지 못했습니다." not in sent_messages[-1]["text"]
-    assert "출처:" in sent_messages[-1]["text"]
+    assert len(sent_messages) >= 2
+    user_msgs = [m for m in sent_messages if m["chat_id"] == "888"]
+    assert len(user_msgs) >= 1
+    assert "저장된 지식 베이스에서 관련된 동향 문서를 찾지 못했습니다." not in user_msgs[-1]["text"]
+    assert "출처:" in user_msgs[-1]["text"]
+    admin_notices = [m for m in sent_messages if "부팅 시작" in m["text"] or "🟡" in m["text"]]
+    assert len(admin_notices) >= 1
 
 
 def test_handle_telegram_update_triggers_provisioner_when_offline():
