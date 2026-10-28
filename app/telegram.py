@@ -108,6 +108,8 @@ def handle_telegram_update(
     article_store: InMemoryArticleStore | None = None,
     base_ui_url: str | None = None,
     provisioner: Any | None = None,
+    allowed_chat_ids: list[str] | None = None,
+    enable_colab_gpu: bool = True,
 ) -> str:
     message = update.get("message") or {}
     chat = message.get("chat") or {}
@@ -145,6 +147,16 @@ def handle_telegram_update(
         logger.debug("Group message ignored: not targeted to bot")
         return ""
 
+    # Check authorization whitelist if specified
+    if allowed_chat_ids and chat_id not in allowed_chat_ids:
+        logger.warning("Unauthorized telegram chat_id blocked: %s", chat_id)
+        reply = "⚠️ 접근 권한이 없습니다. 관리자에게 문의하세요."
+        try:
+            sender(chat_id, reply, reply_to_message_id=reply_to_id)
+        except TypeError:
+            sender(chat_id, reply)
+        return reply
+
     # Strip bot mention in group chats (e.g. /command@DomAssistBot -> /command, @DomAssistBot query -> query)
     text = re.sub(r"^(/[a-zA-Z0-9_]+)@\w+", r"\1", raw_text)
     text = re.sub(r"^@\w+[\s,:]*", "", text).strip()
@@ -158,7 +170,7 @@ def handle_telegram_update(
     if text.startswith("/targets"):
         reply = _format_targets_summary(target_store)
     elif text.startswith("/brief"):
-        if provisioner is not None and hasattr(provisioner, "check_health") and not provisioner.check_health():
+        if enable_colab_gpu and provisioner is not None and hasattr(provisioner, "check_health") and not provisioner.check_health():
             if hasattr(provisioner, "trigger_background_provision"):
                 provisioner.trigger_background_provision()
         recent_docs = retriever.search("recent", k=20)
@@ -171,7 +183,7 @@ def handle_telegram_update(
             article_store.save(article)
         reply = format_telegram_brief_message(article)
     else:
-        if provisioner is not None and hasattr(provisioner, "check_health") and not provisioner.check_health():
+        if enable_colab_gpu and provisioner is not None and hasattr(provisioner, "check_health") and not provisioner.check_health():
             if hasattr(provisioner, "trigger_background_provision"):
                 provisioner.trigger_background_provision()
         result = answer_question(text, retriever=retriever, llm=llm)
@@ -198,6 +210,8 @@ def process_telegram_updates_batch(
     article_store: InMemoryArticleStore | None = None,
     base_ui_url: str | None = None,
     provisioner: Any | None = None,
+    allowed_chat_ids: list[str] | None = None,
+    enable_colab_gpu: bool = True,
 ) -> int | None:
     if not updates:
         return None
@@ -216,6 +230,8 @@ def process_telegram_updates_batch(
             article_store=article_store,
             base_ui_url=base_ui_url,
             provisioner=provisioner,
+            allowed_chat_ids=allowed_chat_ids,
+            enable_colab_gpu=enable_colab_gpu,
         )
 
     return last_offset
