@@ -34,6 +34,8 @@ logger = logging.getLogger("telegram_polling")
 def run_polling_worker(
     *,
     bot_token: str | None = None,
+    ops_bot_token: str | None = None,
+    ops_telegram_chat_id: str | None = None,
     timeout: int = 30,
     poll_interval: float = 1.0,
     once: bool = False,
@@ -49,6 +51,17 @@ def run_polling_worker(
     if not token:
         logger.error("Telegram bot token is missing or could not be resolved.")
         return 1
+
+    ops_token = (
+        ops_bot_token
+        if ops_bot_token is not None
+        else settings.resolved_ops_telegram_bot_token()
+    ).strip()
+    ops_chat = (
+        ops_telegram_chat_id
+        if ops_telegram_chat_id is not None
+        else settings.resolved_ops_telegram_chat_id()
+    ).strip()
 
     t_store = target_store if target_store is not None else InMemoryTargetStore(seed=True)
     r_retriever = (
@@ -76,14 +89,27 @@ def run_polling_worker(
             kwargs["http_post"] = http_post
         send_telegram_message(**kwargs)
 
-    admin_chat_id = settings.resolved_telegram_chat_id()
+    def _ops_sender(chat_id: str, text: str) -> None:
+        kwargs: dict[str, Any] = {
+            "text": text,
+            "bot_token": ops_token,
+            "chat_id": chat_id,
+        }
+        if http_post is not None:
+            kwargs["http_post"] = http_post
+        send_telegram_message(**kwargs)
 
     def _admin_notifier(event: str, message: str) -> None:
-        if admin_chat_id:
+        if ops_token and ops_chat:
             try:
-                _sender(admin_chat_id, message)
+                _ops_sender(ops_chat, message)
+                logger.info("Ops alert dispatched via admin bot (@DomAgyBot)")
             except Exception as exc:
-                logger.warning("Failed to send admin notification: %s", exc)
+                logger.warning("Failed to send admin notification via ops bot: %s", exc)
+        else:
+            logger.warning(
+                "Ops notification skipped: ops_telegram_bot_token or ops_telegram_chat_id not configured"
+            )
 
     if active_prov is not None and getattr(active_prov, "notifier", None) is None:
         active_prov.notifier = _admin_notifier
@@ -145,6 +171,8 @@ def main() -> None:
         description="Run outbound Telegram Bot long polling worker without inbound open ports."
     )
     parser.add_argument("--bot-token", help="Optional Telegram bot token override")
+    parser.add_argument("--ops-bot-token", help="Optional Telegram ops bot token override")
+    parser.add_argument("--ops-chat-id", help="Optional Telegram ops chat id override")
     parser.add_argument("--timeout", type=int, default=30, help="Long polling timeout in seconds")
     parser.add_argument("--interval", type=float, default=1.0, help="Loop interval in seconds")
     parser.add_argument("--once", action="store_true", help="Run a single polling cycle and exit")
@@ -153,6 +181,8 @@ def main() -> None:
     sys.exit(
         run_polling_worker(
             bot_token=args.bot_token,
+            ops_bot_token=args.ops_bot_token,
+            ops_telegram_chat_id=args.ops_chat_id,
             timeout=args.timeout,
             poll_interval=args.interval,
             once=args.once,

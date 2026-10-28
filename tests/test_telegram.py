@@ -107,3 +107,70 @@ def test_handle_telegram_update_routes_commands_and_questions():
     )
     assert "Next.js 16은 MCP 서버를 지원합니다." in reply_q
     assert "https://nextjs.org/blog/next-16" in reply_q
+
+
+def test_handle_telegram_update_strips_bot_mentions_in_group_chats():
+    target_store = InMemoryTargetStore(seed=True)
+    retriever = FakeMemoryRetriever(
+        [
+            Document(
+                page_content="Next.js 16 adds native MCP server.",
+                metadata={
+                    "domain": "fullstack_web",
+                    "target_name": "Next.js",
+                    "source_url": "https://nextjs.org/blog/next-16",
+                },
+            )
+        ]
+    )
+    sent_messages: list[tuple[str, str]] = []
+
+    def fake_sender(chat_id: str, text: str) -> None:
+        sent_messages.append((chat_id, text))
+
+    class EchoLLM:
+        def generate(self, prompt: str) -> str:
+            return "답변 완료"
+
+    # 1) @DomAssistBot mention in group question
+    reply_mention = handle_telegram_update(
+        update={"message": {"chat": {"id": 777}, "text": "@DomAssistBot Next.js 16 변경점은?"}},
+        target_store=target_store,
+        retriever=retriever,
+        llm=EchoLLM(),
+        sender=fake_sender,
+    )
+    assert "답변 완료" in reply_mention
+    assert sent_messages[-1][0] == "777"
+
+    # 2) /brief@DomAssistBot command mention in group
+    reply_brief_mention = handle_telegram_update(
+        update={"message": {"chat": {"id": 777}, "text": "/brief@DomAssistBot"}},
+        target_store=target_store,
+        retriever=retriever,
+        llm=EchoLLM(),
+        sender=fake_sender,
+    )
+    assert "모닝 브리핑" in reply_brief_mention or "아티클" in reply_brief_mention
+
+    # 3) /targets@DomAssistBot command mention in group
+    reply_targets_mention = handle_telegram_update(
+        update={"message": {"chat": {"id": 777}, "text": "/targets@DomAssistBot"}},
+        target_store=target_store,
+        retriever=retriever,
+        llm=EchoLLM(),
+        sender=fake_sender,
+    )
+    assert "ai_agent_llm" in reply_targets_mention
+
+    # 4) Mention only (empty query) -> should return empty string without sending
+    sent_len_before = len(sent_messages)
+    reply_empty = handle_telegram_update(
+        update={"message": {"chat": {"id": 777}, "text": "@DomAssistBot   "}},
+        target_store=target_store,
+        retriever=retriever,
+        llm=EchoLLM(),
+        sender=fake_sender,
+    )
+    assert reply_empty == ""
+    assert len(sent_messages) == sent_len_before
