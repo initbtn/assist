@@ -3,7 +3,7 @@
   "rewrites": [
     {
       "source": "/articles/:slug*",
-      "destination": "/article.html"
+      "destination": "/article"
     }
   ]
 }
