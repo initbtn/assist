@@ -40,3 +40,33 @@ def test_resolved_ops_telegram_chat_id_from_pass(monkeypatch):
     s = Settings(ops_telegram_chat_id="", telegram_chat_id="")
     assert s.resolved_ops_telegram_chat_id() == "ops-admin-chat-id-from-pass"
     assert s.resolved_telegram_chat_id() == "service-chat-id-from-pass"
+
+
+def test_resolved_google_client_id_and_secret_explicit():
+    s = Settings(google_client_id="dummy-explicit-cid", google_client_secret="dummy-explicit-sec")
+    assert s.resolved_google_client_id() == "dummy-explicit-cid"
+    assert s.resolved_google_client_secret() == "dummy-explicit-sec"
+
+
+def test_resolved_google_client_id_and_secret_from_pass(monkeypatch):
+    def fake_pass_runner(key_path: str) -> str:
+        if key_path == "google/waffle-dominic/client_id":
+            return "dummy-waffle-cid-from-pass\n"
+        if key_path == "google/waffle-dominic/client_secret":
+            return "dummy-waffle-sec-from-pass\n"
+        return ""
+
+    monkeypatch.setattr("app.config._default_pass_runner", fake_pass_runner)
+
+    s = Settings(google_client_id="", google_client_secret="")
+    assert s.resolved_google_client_id() == "dummy-waffle-cid-from-pass"
+    assert s.resolved_google_client_secret() == "dummy-waffle-sec-from-pass"
+
+
+def test_resolved_google_client_id_and_secret_empty_when_missing(monkeypatch):
+    monkeypatch.setattr("app.config._default_pass_runner", lambda _: "")
+
+    s = Settings(google_client_id="", google_client_secret="")
+    assert s.resolved_google_client_id() == ""
+    assert s.resolved_google_client_secret() == ""
+

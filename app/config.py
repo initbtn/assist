@@ -96,36 +96,14 @@ class Settings(BaseSettings):
     def resolved_google_client_id(self) -> str:
         if self.google_client_id.strip():
             return self.google_client_id.strip()
-        candidates = [
-            "google/waffle-dominic/client_id",
-            "google/waffle-dominic/client-id",
-            "waffle-dominic/client-id",
-            "waffle-dominic/client_id",
-            "google/initbtn/client_id",
-            "google/client_id",
-        ]
-        for c in candidates:
-            val = resolve_pass_secret(c)
-            if val:
-                return val.strip()
-        return ""
+        val = resolve_pass_secret("google/waffle-dominic/client_id")
+        return val.strip() if val else ""
 
     def resolved_google_client_secret(self) -> str:
         if self.google_client_secret.strip():
             return self.google_client_secret.strip()
-        candidates = [
-            "google/waffle-dominic/client_secret",
-            "google/waffle-dominic/client-secret",
-            "waffle-dominic/client-secret",
-            "waffle-dominic/client_secret",
-            "google/initbtn/client_secret",
-            "google/client_secret",
-        ]
-        for c in candidates:
-            val = resolve_pass_secret(c)
-            if val:
-                return val.strip()
-        return ""
+        val = resolve_pass_secret("google/waffle-dominic/client_secret")
+        return val.strip() if val else ""
 
     def resolved_google_redirect_uri(self) -> str:
         if self.google_redirect_uri.strip():

@@ -16,12 +16,34 @@ if ! gpg-connect-agent 'keyinfo --list' /bye 2>/dev/null | awk '$7 == 1 {found=1
   exit 1
 fi
 
-# 2. Configure inbound firewall (default: disabled, outbound-only mode)
+# 2. Required secrets resolution and fail-fast validation (no fallback clutter)
+fetch_required_secret() {
+  local var_name="$1"
+  local pass_path="$2"
+  local val
+  val="$(pass show "${pass_path}" 2>/dev/null | head -n1 || true)"
+  if [[ -z "${val}" ]]; then
+    echo "ERROR: Required secret '${var_name}' is missing or empty at pass path '${pass_path}'. Aborting deploy." >&2
+    exit 1
+  fi
+  printf '%s' "${val}"
+}
+
+echo "[1/5] Resolving required production secrets from pass..."
+TELEGRAM_BOT_TOKEN="$(fetch_required_secret TELEGRAM_BOT_TOKEN telegram/domAssistBot/bot-token)"
+TELEGRAM_CHAT_ID="$(fetch_required_secret TELEGRAM_CHAT_ID telegram/domAssistBot/chat-id)"
+OPS_TELEGRAM_BOT_TOKEN="$(fetch_required_secret OPS_TELEGRAM_BOT_TOKEN telegram/bot-token)"
+OPS_TELEGRAM_CHAT_ID="$(fetch_required_secret OPS_TELEGRAM_CHAT_ID telegram/chat-id)"
+GITHUB_TOKEN="$(fetch_required_secret GITHUB_TOKEN github/gh-token)"
+GOOGLE_CLIENT_ID="$(fetch_required_secret GOOGLE_CLIENT_ID google/waffle-dominic/client_id)"
+GOOGLE_CLIENT_SECRET="$(fetch_required_secret GOOGLE_CLIENT_SECRET google/waffle-dominic/client_secret)"
+
+# 3. Configure inbound firewall (default: disabled, outbound-only mode)
 ENABLE_INBOUND_8001="${ENABLE_INBOUND_8001:-false}"
 if [[ "${ENABLE_INBOUND_8001}" == "true" ]]; then
   ADMIN_IP="${ADMIN_IP:-$(curl -s --max-time 5 https://api.ipify.org)}"
   SOURCE_RANGES="$(PYTHONPATH="${REPO_ROOT}" "${PYTHON_BIN}" -c "import sys; from app.config import build_gcp_allowed_source_ranges; print(build_gcp_allowed_source_ranges(sys.argv[1]))" "${ADMIN_IP}")"
-  echo "[1/4] Inbound 8001 enabled: Configuring GCP firewall rule ${FIREWALL_RULE} (source-ranges: ${SOURCE_RANGES})..."
+  echo "[2/5] Inbound 8001 enabled: Configuring GCP firewall rule ${FIREWALL_RULE} (source-ranges: ${SOURCE_RANGES})..."
   if gcloud compute firewall-rules describe "${FIREWALL_RULE}" >/dev/null 2>&1; then
     gcloud compute firewall-rules update "${FIREWALL_RULE}" \
       --allow="tcp:8001" \
@@ -36,16 +58,16 @@ if [[ "${ENABLE_INBOUND_8001}" == "true" ]]; then
       --quiet
   fi
 elif [[ "${ENABLE_INBOUND_8001}" == "preserve" ]]; then
-  echo "[1/4] Preserving existing GCP firewall rule ${FIREWALL_RULE}..."
+  echo "[2/5] Preserving existing GCP firewall rule ${FIREWALL_RULE}..."
 else
-  echo "[1/4] Inbound port 8001 disabled (outbound-only mode). Ensuring firewall rule is disabled..."
+  echo "[2/5] Inbound port 8001 disabled (outbound-only mode). Ensuring firewall rule is disabled..."
   if gcloud compute firewall-rules describe "${FIREWALL_RULE}" >/dev/null 2>&1; then
     gcloud compute firewall-rules update "${FIREWALL_RULE}" --disabled --quiet >/dev/null 2>&1 || true
   fi
 fi
 
-# 3. Ensure 2GB Swap + vm.swappiness=10 on marine-edge-pc (idempotent)
-echo "[2/4] Ensuring 2GB swapfile and vm.swappiness=10 on ${INSTANCE_NAME} (${ZONE})..."
+# 4. Ensure 2GB Swap + vm.swappiness=10 on marine-edge-pc (idempotent)
+echo "[3/5] Ensuring 2GB swapfile and vm.swappiness=10 on ${INSTANCE_NAME} (${ZONE})..."
 gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command="
   set -euo pipefail
   if ! sudo swapon --show | grep -q '/swapfile'; then
@@ -64,8 +86,8 @@ gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command="
   mkdir -p ~/assist
 "
 
-# 4. Sync source archive, start container via RAM tmpfs (/dev/shm), and purge swap after build
-echo "[3/4] Syncing source, starting assist-api container, and purging residual swap on ${INSTANCE_NAME}..."
+# 5. Sync source archive, start container via RAM tmpfs (/dev/shm), and purge swap after build
+echo "[4/5] Syncing source, starting assist-api container, and purging residual swap on ${INSTANCE_NAME}..."
 tar -C "${REPO_ROOT}" -czf - \
   Dockerfile \
   docker-compose.gcp.yml \
@@ -77,11 +99,11 @@ tar -C "${REPO_ROOT}" -czf - \
   scripts | gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command="tar -C ~/assist -xzf -"
 
 {
-  printf 'TELEGRAM_BOT_TOKEN=%s\n' "$(pass show telegram/domAssistBot/bot-token | head -n1)"
-  printf 'TELEGRAM_CHAT_ID=%s\n' "$(pass show telegram/domAssistBot/chat-id | head -n1)"
-  printf 'OPS_TELEGRAM_BOT_TOKEN=%s\n' "$(pass show telegram/bot-token | head -n1)"
-  printf 'OPS_TELEGRAM_CHAT_ID=%s\n' "$(pass show telegram/chat-id | head -n1)"
-  printf 'GITHUB_TOKEN=%s\n' "$(pass show github/gh-token | head -n1)"
+  printf 'TELEGRAM_BOT_TOKEN=%s\n' "${TELEGRAM_BOT_TOKEN}"
+  printf 'TELEGRAM_CHAT_ID=%s\n' "${TELEGRAM_CHAT_ID}"
+  printf 'OPS_TELEGRAM_BOT_TOKEN=%s\n' "${OPS_TELEGRAM_BOT_TOKEN}"
+  printf 'OPS_TELEGRAM_CHAT_ID=%s\n' "${OPS_TELEGRAM_CHAT_ID}"
+  printf 'GITHUB_TOKEN=%s\n' "${GITHUB_TOKEN}"
   printf 'OLLAMA_BASE_URL=%s\n' "${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
   printf 'OLLAMA_MODEL_NAME=%s\n' "${OLLAMA_MODEL_NAME:-gemma3:12b}"
   printf 'USE_PGVECTOR=%s\n' "${USE_PGVECTOR:-false}"
@@ -89,10 +111,8 @@ tar -C "${REPO_ROOT}" -czf - \
   printf 'GCP_COLAB_SECRET_NAME=%s\n' "${GCP_COLAB_SECRET_NAME:-assist-colab-credentials}"
   printf 'FIREBASE_PROJECT_ID=%s\n' "${FIREBASE_PROJECT_ID:-waffle-dominic}"
   printf 'ADMIN_EMAILS=%s\n' "${ADMIN_EMAILS:-cto.jsconn@gmail.com,dev.js.conn@gmail.com}"
-  GOOGLE_CID="$(pass show google/waffle-dominic/client_id 2>/dev/null || pass show google/waffle-dominic/client-id 2>/dev/null || pass show waffle-dominic/client-id 2>/dev/null || pass show google/client_id 2>/dev/null | head -n1)"
-  GOOGLE_SEC="$(pass show google/waffle-dominic/client_secret 2>/dev/null || pass show google/waffle-dominic/client-secret 2>/dev/null || pass show waffle-dominic/client-secret 2>/dev/null || pass show google/client_secret 2>/dev/null | head -n1)"
-  printf 'GOOGLE_CLIENT_ID=%s\n' "${GOOGLE_CID}"
-  printf 'GOOGLE_CLIENT_SECRET=%s\n' "${GOOGLE_SEC}"
+  printf 'GOOGLE_CLIENT_ID=%s\n' "${GOOGLE_CLIENT_ID}"
+  printf 'GOOGLE_CLIENT_SECRET=%s\n' "${GOOGLE_CLIENT_SECRET}"
 } | gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command="
   set -euo pipefail
   TMP_ENV=\"/dev/shm/assist-env.\$\$\"
@@ -133,7 +153,7 @@ if [[ "${ENABLE_INBOUND_8001}" == "true" ]]; then
   echo "ERROR: Health check failed for http://${EXTERNAL_IP}:8001/health" >&2
   exit 1
 else
-  echo "[4/4] Verifying internal health via SSH (http://127.0.0.1:8001/health)..."
+  echo "[5/5] Verifying internal health via SSH (http://127.0.0.1:8001/health)..."
   for _ in {1..15}; do
     if gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command="curl -fsS --max-time 3 http://127.0.0.1:8001/health" 2>/dev/null | grep -q '"ok"'; then
       echo "Deployment verified internally: http://127.0.0.1:8001/health -> ok (inbound port 8001 safely closed)"
