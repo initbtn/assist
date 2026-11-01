@@ -88,7 +88,7 @@ tar -C "${REPO_ROOT}" -czf - \
   printf 'GCP_PROJECT=%s\n' "${GCP_PROJECT:-initbtn-510706}"
   printf 'GCP_COLAB_SECRET_NAME=%s\n' "${GCP_COLAB_SECRET_NAME:-assist-colab-credentials}"
   printf 'FIREBASE_PROJECT_ID=%s\n' "${FIREBASE_PROJECT_ID:-waffle-dominic}"
-  printf 'ADMIN_EMAILS=%s\n' "${ADMIN_EMAILS:-cto.jsconn@gmail.com}"
+  printf 'ADMIN_EMAILS=%s\n' "${ADMIN_EMAILS:-cto.jsconn@gmail.com,dev.js.conn@gmail.com}"
   printf 'GOOGLE_CLIENT_ID=%s\n' "$(pass show google/client_id | head -n1)"
   printf 'GOOGLE_CLIENT_SECRET=%s\n' "$(pass show google/client_secret | head -n1)"
 } | gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command="

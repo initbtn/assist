@@ -86,7 +86,7 @@ class Settings(BaseSettings):
     telegram_webhook_secret: str = ""
     telegram_allowed_chat_ids: str = ""
     admin_api_key: str = ""
-    admin_emails: str = "cto.jsconn@gmail.com"
+    admin_emails: str = "cto.jsconn@gmail.com,dev.js.conn@gmail.com"
     firebase_project_id: str = "waffle-dominic"
     google_client_id: str = ""
     google_client_secret: str = ""
@@ -115,7 +115,7 @@ class Settings(BaseSettings):
         raw = self.admin_emails.strip()
         if raw:
             return [e.strip().lower() for e in raw.split(",") if e.strip()]
-        return ["cto.jsconn@gmail.com"]
+        return ["cto.jsconn@gmail.com", "dev.js.conn@gmail.com"]
 
     def resolved_admin_api_key(self) -> str:
         if self.admin_api_key.strip():
