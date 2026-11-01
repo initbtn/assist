@@ -96,13 +96,13 @@ class Settings(BaseSettings):
     def resolved_google_client_id(self) -> str:
         if self.google_client_id.strip():
             return self.google_client_id.strip()
-        val = resolve_pass_secret("google/client_id")
+        val = resolve_pass_secret("google/waffle-dominic/client_id")
         return val.strip() if val else ""
 
     def resolved_google_client_secret(self) -> str:
         if self.google_client_secret.strip():
             return self.google_client_secret.strip()
-        val = resolve_pass_secret("google/client_secret")
+        val = resolve_pass_secret("google/waffle-dominic/client_secret")
         return val.strip() if val else ""
 
     def resolved_google_redirect_uri(self) -> str:
