@@ -35,6 +35,8 @@ if [[ "${ENABLE_INBOUND_8001}" == "true" ]]; then
       --description="Allow restricted access to assist-api on port 8001" \
       --quiet
   fi
+elif [[ "${ENABLE_INBOUND_8001}" == "preserve" ]]; then
+  echo "[1/4] Preserving existing GCP firewall rule ${FIREWALL_RULE}..."
 else
   echo "[1/4] Inbound port 8001 disabled (outbound-only mode). Ensuring firewall rule is disabled..."
   if gcloud compute firewall-rules describe "${FIREWALL_RULE}" >/dev/null 2>&1; then
@@ -85,6 +87,8 @@ tar -C "${REPO_ROOT}" -czf - \
   printf 'USE_PGVECTOR=%s\n' "${USE_PGVECTOR:-false}"
   printf 'GCP_PROJECT=%s\n' "${GCP_PROJECT:-initbtn-510706}"
   printf 'GCP_COLAB_SECRET_NAME=%s\n' "${GCP_COLAB_SECRET_NAME:-assist-colab-credentials}"
+  printf 'FIREBASE_PROJECT_ID=%s\n' "${FIREBASE_PROJECT_ID:-waffle-dominic}"
+  printf 'ADMIN_EMAILS=%s\n' "${ADMIN_EMAILS:-cto.jsconn@gmail.com}"
 } | gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command="
   set -euo pipefail
   TMP_ENV=\"/dev/shm/assist-env.\$\$\"

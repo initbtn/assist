@@ -23,6 +23,8 @@ services:
       PUBLIC_UI_BASE_URL: ${PUBLIC_UI_BASE_URL:-https://assist-brief.vercel.app}
       GCP_PROJECT: ${GCP_PROJECT:-initbtn-510706}
       GCP_COLAB_SECRET_NAME: ${GCP_COLAB_SECRET_NAME:-assist-colab-credentials}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-waffle-dominic}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-cto.jsconn@gmail.com}
     mem_limit: 256m
     restart: unless-stopped
 
@@ -48,5 +50,7 @@ services:
       PUBLIC_UI_BASE_URL: ${PUBLIC_UI_BASE_URL:-https://assist-brief.vercel.app}
       GCP_PROJECT: ${GCP_PROJECT:-initbtn-510706}
       GCP_COLAB_SECRET_NAME: ${GCP_COLAB_SECRET_NAME:-assist-colab-credentials}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-waffle-dominic}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-cto.jsconn@gmail.com}
     mem_limit: 128m
     restart: unless-stopped
