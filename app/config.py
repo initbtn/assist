@@ -92,6 +92,24 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     google_redirect_uri: str = ""
     public_ui_base_url: str = "https://assist-brief.vercel.app"
+    firestore_sa_key_json: str = ""
+    gateway_token: str = ""
+
+    def resolved_gateway_token(self) -> str:
+        if self.gateway_token.strip():
+            return self.gateway_token.strip()
+        from app.security import fetch_raw_gateway_credentials
+
+        creds = fetch_raw_gateway_credentials()
+        return creds.get("gateway_token", "").strip()
+
+    def resolved_firestore_sa_key_json(self) -> str:
+        if self.firestore_sa_key_json.strip():
+            return self.firestore_sa_key_json.strip()
+        from app.security import fetch_raw_gateway_credentials
+
+        creds = fetch_raw_gateway_credentials()
+        return creds.get("firestore_sa_key_json", "").strip()
 
     def resolved_google_client_id(self) -> str:
         if self.google_client_id.strip():

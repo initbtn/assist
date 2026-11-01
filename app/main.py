@@ -6,7 +6,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, sta
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
-from app.auth import ApiTokenRecord, TokenManager
+from app.auth import ApiTokenRecord, TokenManager, verify_api_key
 from app.auth_oauth import (
     build_google_auth_url,
     exchange_code_for_user_info,
@@ -14,6 +14,7 @@ from app.auth_oauth import (
     verify_oauth_admin_token,
 )
 from app.firebase_auth import verify_firebase_id_token
+from app.gateway_chat import router as gateway_chat_router
 from app.articles import (
     BriefingArticle,
     InMemoryArticleStore,
@@ -121,30 +122,6 @@ class BotConfigUpdateRequest(BaseModel):
     allowed_chat_ids: list[str] | None = None
     enable_colab_gpu: bool | None = None
     rate_limit_rpm: int | None = None
-
-
-def verify_api_key(
-    x_api_key: str | None = Header(default=None),
-    authorization: str | None = Header(default=None),
-) -> ApiTokenRecord:
-    raw_key = x_api_key
-    if not raw_key and authorization:
-        parts = authorization.strip().split()
-        if len(parts) == 2 and parts[0].lower() == "bearer":
-            raw_key = parts[1]
-    if not raw_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing API Key. Provide via X-API-Key or Authorization: Bearer <key>",
-        )
-    token_store = TokenManager.get_store()
-    token_rec = token_store.validate_api_key(raw_key)
-    if not token_rec:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid, expired, or revoked API Key",
-        )
-    return token_rec
 
 
 def verify_admin_key(
@@ -660,6 +637,8 @@ def create_app(
             "models": [settings.llm_model_name, settings.ollama_model_name],
             "authenticated_app_id": token.app_id,
         }
+
+    app.include_router(gateway_chat_router, prefix="/v1/gateway/chat", tags=["gateway_chat"])
 
     return app
 

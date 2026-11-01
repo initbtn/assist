@@ -8,3 +8,5 @@ python-dotenv
 pytest
 google-colab-cli
 google-cloud-secret-manager
+google-cloud-firestore
+

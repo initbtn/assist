@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
+from fastapi import Header, HTTPException, status
+
 logger = logging.getLogger(__name__)
 
 
@@ -547,3 +549,41 @@ class TokenManager:
     @classmethod
     def reset_store(cls) -> None:
         cls._store = InMemoryTokenStore()
+
+
+def verify_api_key(
+    x_api_key: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
+) -> ApiTokenRecord:
+    raw_key = x_api_key
+    if not raw_key and authorization:
+        parts = authorization.strip().split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            raw_key = parts[1]
+    if not raw_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing API Key. Provide via X-API-Key or Authorization: Bearer <key>",
+        )
+    token_store = TokenManager.get_store()
+    token_rec = token_store.validate_api_key(raw_key)
+    if not token_rec:
+        from app.config import settings
+
+        configured_token = settings.resolved_gateway_token()
+        if configured_token and secrets.compare_digest(raw_key, configured_token):
+            return ApiTokenRecord(
+                id="gateway-static-token",
+                app_id="initbtn/blog",
+                name="blog-gateway-token",
+                key_prefix=raw_key[:17] if len(raw_key) >= 17 else raw_key,
+                key_hash="",
+                refresh_token_hash="",
+                expires_at=datetime.now(timezone.utc) + timedelta(days=3650),
+            )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid, expired, or revoked API Key",
+        )
+    return token_rec
+
