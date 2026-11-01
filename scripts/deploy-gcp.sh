@@ -89,8 +89,10 @@ tar -C "${REPO_ROOT}" -czf - \
   printf 'GCP_COLAB_SECRET_NAME=%s\n' "${GCP_COLAB_SECRET_NAME:-assist-colab-credentials}"
   printf 'FIREBASE_PROJECT_ID=%s\n' "${FIREBASE_PROJECT_ID:-waffle-dominic}"
   printf 'ADMIN_EMAILS=%s\n' "${ADMIN_EMAILS:-cto.jsconn@gmail.com,dev.js.conn@gmail.com}"
-  printf 'GOOGLE_CLIENT_ID=%s\n' "$(pass show google/client_id | head -n1)"
-  printf 'GOOGLE_CLIENT_SECRET=%s\n' "$(pass show google/client_secret | head -n1)"
+  GOOGLE_CID="$(pass show google/waffle-dominic/client_id 2>/dev/null || pass show google/waffle-dominic/client-id 2>/dev/null || pass show waffle-dominic/client-id 2>/dev/null || pass show google/client_id 2>/dev/null | head -n1)"
+  GOOGLE_SEC="$(pass show google/waffle-dominic/client_secret 2>/dev/null || pass show google/waffle-dominic/client-secret 2>/dev/null || pass show waffle-dominic/client-secret 2>/dev/null || pass show google/client_secret 2>/dev/null | head -n1)"
+  printf 'GOOGLE_CLIENT_ID=%s\n' "${GOOGLE_CID}"
+  printf 'GOOGLE_CLIENT_SECRET=%s\n' "${GOOGLE_SEC}"
 } | gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command="
   set -euo pipefail
   TMP_ENV=\"/dev/shm/assist-env.\$\$\"
