@@ -153,9 +153,15 @@ def verify_admin_key(
         fb_payload = verify_firebase_id_token(raw_token, settings.firebase_project_id)
         if fb_payload:
             email = str(fb_payload.get("email") or "").strip().lower()
+            email_verified = fb_payload.get("email_verified") is True
             allowed_emails = settings.resolved_admin_emails()
-            if email and email in allowed_emails:
+            if email and email_verified and email in allowed_emails:
                 return email
+            if email and not email_verified and email in allowed_emails:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Forbidden: email {email} is not verified",
+                )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Forbidden: email {email} is not an authorized administrator",

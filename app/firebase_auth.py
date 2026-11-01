@@ -19,10 +19,10 @@ _CERTS_CACHE: dict[str, str] = {}
 _CERTS_CACHE_EXPIRY: float = 0.0
 
 
-def _fetch_google_public_certs() -> dict[str, str]:
+def _fetch_google_public_certs(force_refresh: bool = False) -> dict[str, str]:
     global _CERTS_CACHE, _CERTS_CACHE_EXPIRY
     now = time.time()
-    if _CERTS_CACHE and now < _CERTS_CACHE_EXPIRY:
+    if not force_refresh and _CERTS_CACHE and now < _CERTS_CACHE_EXPIRY:
         return _CERTS_CACHE
 
     try:
@@ -82,6 +82,8 @@ def verify_firebase_id_token(
         header = json.loads(_urlsafe_b64decode(raw_header).decode("utf-8"))
         payload = json.loads(_urlsafe_b64decode(raw_payload).decode("utf-8"))
         signature = _urlsafe_b64decode(raw_sig)
+        if not isinstance(header, dict) or not isinstance(payload, dict):
+            return None
     except Exception as exc:
         logger.debug("Failed to decode token parts: %s", exc)
         return None
@@ -90,12 +92,21 @@ def verify_firebase_id_token(
         return None
 
     kid = header.get("kid")
-    if not kid:
+    if not kid or not isinstance(kid, str):
         return None
 
     now = int(time.time())
     if payload.get("exp", 0) < now:
         logger.debug("Firebase ID token expired: %s < %s", payload.get("exp"), now)
+        return None
+
+    # Clock skew tolerance (5 minutes) for issue time
+    clock_skew = 300
+    if payload.get("iat") and payload.get("iat") > now + clock_skew:
+        logger.debug("Token issued in the future: %s > %s", payload.get("iat"), now)
+        return None
+    if payload.get("auth_time") and payload.get("auth_time") > now + clock_skew:
+        logger.debug("Auth time in the future: %s > %s", payload.get("auth_time"), now)
         return None
 
     if payload.get("aud") != expected_project_id:
@@ -113,6 +124,10 @@ def verify_firebase_id_token(
     # Fetch public certs
     fetcher = certs_fetcher if certs_fetcher is not None else _fetch_google_public_certs
     certs = fetcher()
+    if kid not in certs and certs_fetcher is None:
+        # Cache miss on key rotation: force refresh certs from Google
+        certs = _fetch_google_public_certs(force_refresh=True)
+
     if kid not in certs:
         logger.debug("kid %s not found in Google public certs", kid)
         return None
