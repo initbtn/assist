@@ -27,6 +27,7 @@ services:
       ADMIN_EMAILS: ${ADMIN_EMAILS:-cto.jsconn@gmail.com,dev.js.conn@gmail.com}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      FIRESTORE_SA_KEY_JSON: ${FIRESTORE_SA_KEY_JSON:-}
     mem_limit: 256m
     restart: unless-stopped
 
@@ -56,5 +57,6 @@ services:
       ADMIN_EMAILS: ${ADMIN_EMAILS:-cto.jsconn@gmail.com,dev.js.conn@gmail.com}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      FIRESTORE_SA_KEY_JSON: ${FIRESTORE_SA_KEY_JSON:-}
     mem_limit: 128m
     restart: unless-stopped

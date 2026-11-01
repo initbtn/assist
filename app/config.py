@@ -92,6 +92,20 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     google_redirect_uri: str = ""
     public_ui_base_url: str = "https://assist-brief.vercel.app"
+    firestore_sa_key_json: str = ""
+    gateway_token: str = ""
+
+    def resolved_gateway_token(self) -> str:
+        if self.gateway_token.strip():
+            return self.gateway_token.strip()
+        val = resolve_pass_secret("assist/gateway-token")
+        return val.strip() if val else ""
+
+    def resolved_firestore_sa_key_json(self) -> str:
+        if self.firestore_sa_key_json.strip():
+            return self.firestore_sa_key_json.strip()
+        val = resolve_pass_secret("gcp/waffle-dominic/service-account.json")
+        return val.strip() if val else ""
 
     def resolved_google_client_id(self) -> str:
         if self.google_client_id.strip():
