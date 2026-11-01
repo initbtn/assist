@@ -88,7 +88,28 @@ class Settings(BaseSettings):
     admin_api_key: str = ""
     admin_emails: str = "cto.jsconn@gmail.com"
     firebase_project_id: str = "waffle-dominic"
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = ""
     public_ui_base_url: str = "https://assist-brief.vercel.app"
+
+    def resolved_google_client_id(self) -> str:
+        if self.google_client_id.strip():
+            return self.google_client_id.strip()
+        val = resolve_pass_secret("google/client_id")
+        return val.strip() if val else ""
+
+    def resolved_google_client_secret(self) -> str:
+        if self.google_client_secret.strip():
+            return self.google_client_secret.strip()
+        val = resolve_pass_secret("google/client_secret")
+        return val.strip() if val else ""
+
+    def resolved_google_redirect_uri(self) -> str:
+        if self.google_redirect_uri.strip():
+            return self.google_redirect_uri.strip()
+        base = self.public_ui_base_url.rstrip("/")
+        return f"{base}/v1/admin/auth/google/callback"
 
     def resolved_admin_emails(self) -> list[str]:
         raw = self.admin_emails.strip()

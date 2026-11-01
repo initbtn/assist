@@ -4,8 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>assist Console — B2B Cloud Service Console</title>
-  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
   <style>
     :root {
       --bg: #0b0f19;
@@ -477,81 +475,54 @@
   </div>
 
   <script>
-    const firebaseConfig = {
-      apiKey: "AIzaSyBT3BYmhWlT_2bY9SvmXzxtEHA1ziOqK7U",
-      authDomain: "waffle-dominic.firebaseapp.com",
-      projectId: "waffle-dominic",
-      storageBucket: "waffle-dominic.firebasestorage.app",
-      messagingSenderId: "508825847528",
-      appId: "1:508825847528:web:3a0eace3aa5c0a5aa22b5d",
-      measurementId: "G-L739S3NLGG"
-    };
-
-    let currentUser = null;
-    let currentIdToken = null;
     let activeAppId = null;
     let appsData = [];
 
-    if (typeof firebase !== 'undefined') {
-      try {
-        firebase.initializeApp(firebaseConfig);
-        const auth = firebase.auth();
-        auth.onAuthStateChanged(async (user) => {
-          currentUser = user;
-          if (user) {
-            currentIdToken = await user.getIdToken();
-            renderAuthNav(user);
-            loadApps();
-          } else {
-            currentIdToken = null;
-            renderAuthNav(null);
-            loadApps();
-          }
-        });
-      } catch (err) {
-        console.error('Firebase init error:', err);
+    function handleAuthHash() {
+      const hash = window.location.hash;
+      if (!hash) return;
+      const params = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash);
+      const adminToken = params.get('admin_token');
+      const adminEmail = params.get('email');
+      const error = params.get('error');
+
+      if (adminToken) {
+        sessionStorage.setItem('assist_admin_session_token', adminToken);
+        if (adminEmail) sessionStorage.setItem('assist_admin_email', adminEmail);
+        history.replaceState(null, '', window.location.pathname);
+      } else if (error) {
+        alert('로그인 오류: ' + decodeURIComponent(error));
+        history.replaceState(null, '', window.location.pathname);
       }
     }
 
-    async function loginWithGoogle() {
-      try {
-        const auth = firebase.auth();
-        const provider = new firebase.auth.GoogleAuthProvider();
-        await auth.signInWithPopup(provider);
-      } catch (err) {
-        alert('Google 로그인 실패: ' + err.message);
-      }
-    }
-
-    async function logout() {
-      try {
-        await firebase.auth().signOut();
-        currentUser = null;
-        currentIdToken = null;
-        renderAuthNav(null);
-        loadApps();
-      } catch (err) {
-        alert('로그아웃 실패: ' + err.message);
-      }
-    }
-
-    function renderAuthNav(user) {
+    function renderAuthNav() {
       const nav = document.getElementById('auth-nav-container');
       if (!nav) return;
-      if (user) {
+      const sessionToken = sessionStorage.getItem('assist_admin_session_token');
+      const email = sessionStorage.getItem('assist_admin_email') || 'cto.jsconn@gmail.com';
+
+      if (sessionToken) {
         nav.innerHTML = `
-          <span style="color:var(--accent); font-size:0.85rem; font-weight:600;">👤 ${escapeHtml(user.email || user.displayName || 'Admin')}</span>
+          <span style="color:var(--accent); font-size:0.85rem; font-weight:600;">👤 ${escapeHtml(email)}</span>
           <a href="javascript:void(0)" onclick="logout()" style="color:var(--danger); font-size:0.85rem; margin-left:12px;">로그아웃</a>
           <a href="javascript:void(0)" onclick="resetAdminKey()" style="color:var(--muted); font-size:0.85rem; margin-left:12px;">🔑 Key 직접 입력</a>
           <a href="/" style="margin-left:16px;">← 브리핑 뷰어로 돌아가기</a>
         `;
       } else {
         nav.innerHTML = `
-          <button class="btn btn-secondary" onclick="loginWithGoogle()" style="padding:4px 12px; font-size:0.82rem;">Google 로그인 (cto.jsconn@gmail.com)</button>
+          <a href="/v1/admin/auth/google/login" class="btn btn-secondary" style="padding:4px 12px; font-size:0.82rem; text-decoration:none;">Google 관리자 로그인</a>
           <a href="javascript:void(0)" onclick="resetAdminKey()" style="color:var(--muted); font-size:0.85rem; margin-left:12px;">🔑 Key 직접 입력</a>
           <a href="/" style="margin-left:16px;">← 브리핑 뷰어로 돌아가기</a>
         `;
       }
+    }
+
+    function logout() {
+      sessionStorage.removeItem('assist_admin_session_token');
+      sessionStorage.removeItem('assist_admin_email');
+      renderAuthNav();
+      loadApps();
     }
 
     function switchTab(name) {
@@ -585,15 +556,11 @@
     }
 
     async function fetchJson(path, options = {}) {
-      if (currentUser) {
-        try {
-          currentIdToken = await currentUser.getIdToken();
-        } catch (_) {}
-      }
+      const sessionToken = sessionStorage.getItem('assist_admin_session_token');
       const adminKey = getAdminKey();
       const authHeaders = {};
-      if (currentIdToken) {
-        authHeaders['Authorization'] = `Bearer ${currentIdToken}`;
+      if (sessionToken) {
+        authHeaders['Authorization'] = `Bearer ${sessionToken}`;
       } else if (adminKey) {
         authHeaders['X-Admin-Key'] = adminKey;
       }
@@ -605,8 +572,12 @@
       };
       const res = await fetch(path, { ...options, headers });
       if (res.status === 401 && path.startsWith('/v1/admin')) {
-        if (!currentUser && !adminKey) {
-          const key = prompt('🔑 관리자 인증이 필요합니다. Google 로그인하거나 Admin Key를 입력하세요:');
+        if (!sessionToken && !adminKey) {
+          if (confirm('🔑 관리자 인증이 필요합니다. Google 로그인 페이지로 이동하시겠습니까?')) {
+            window.location.href = '/v1/admin/auth/google/login';
+            return;
+          }
+          const key = prompt('또는 Admin Key를 직접 입력하세요:');
           if (key) {
             setAdminKey(key);
             return fetchJson(path, options);
@@ -785,9 +756,9 @@
     }
 
     window.addEventListener('DOMContentLoaded', () => {
-      if (typeof firebase === 'undefined') {
-        loadApps();
-      }
+      handleAuthHash();
+      renderAuthNav();
+      loadApps();
     });
   </script>
 </body>

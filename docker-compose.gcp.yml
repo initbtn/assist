@@ -25,6 +25,8 @@ services:
       GCP_COLAB_SECRET_NAME: ${GCP_COLAB_SECRET_NAME:-assist-colab-credentials}
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-waffle-dominic}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-cto.jsconn@gmail.com}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     mem_limit: 256m
     restart: unless-stopped
 
@@ -52,5 +54,7 @@ services:
       GCP_COLAB_SECRET_NAME: ${GCP_COLAB_SECRET_NAME:-assist-colab-credentials}
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-waffle-dominic}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-cto.jsconn@gmail.com}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     mem_limit: 128m
     restart: unless-stopped
