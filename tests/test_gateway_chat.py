@@ -16,13 +16,15 @@ def setup_chat_test_environment(monkeypatch):
 
     # Setup in-memory chat store
     chat_store = InMemoryChatStore()
-    monkeypatch.setattr(ChatStoreManager, "get_store", classmethod(lambda cls: chat_store))
+    ChatStoreManager.set_store(chat_store)
 
     yield {
         "token": pair.api_key,
         "app_id": app_rec.id,
         "chat_store": chat_store,
     }
+
+    ChatStoreManager.set_store(None)
 
 
 def test_gateway_chat_unauthorized():
@@ -277,4 +279,85 @@ def test_firestore_chat_store_unit_mock():
     none_sess, none_msgs = store.get_session_with_messages("s_none")
     assert none_sess is None
     assert none_msgs == []
+
+
+def test_firestore_chat_store_last_active_conditional_update():
+    from unittest.mock import MagicMock
+    from app.firestore_chat import ChatMessage, FirestoreChatStore
+
+    mock_client = MagicMock()
+    mock_coll = MagicMock()
+    mock_doc = MagicMock()
+    mock_subcoll = MagicMock()
+    mock_msg_doc = MagicMock()
+
+    mock_client.collection.return_value = mock_coll
+    mock_coll.document.return_value = mock_doc
+    mock_doc.collection.return_value = mock_subcoll
+    mock_subcoll.document.return_value = mock_msg_doc
+
+    store = FirestoreChatStore(client=mock_client)
+
+    # Mock session currently has lastActiveAt = 500
+    mock_session_snap = MagicMock()
+    mock_session_snap.exists = True
+    mock_session_snap.to_dict.return_value = {"lastActiveAt": 500}
+    mock_doc.get.return_value = mock_session_snap
+
+    # 1. Incoming newer message (timestamp 600 > 500) -> should update lastActiveAt
+    msg_new = ChatMessage(id="m_new", sender="user", text="newer", timestamp=600, timeString="")
+    store.add_message("s1", msg_new)
+    mock_doc.set.assert_called_with({"lastActiveAt": 600}, merge=True)
+
+    # Reset mock call
+    mock_doc.set.reset_mock()
+
+    # 2. Incoming older message (timestamp 400 < 500) -> should NOT update lastActiveAt
+    msg_old = ChatMessage(id="m_old", sender="user", text="older", timestamp=400, timeString="")
+    store.add_message("s1", msg_old)
+    mock_doc.set.assert_not_called()
+
+
+def test_fetch_raw_gateway_credentials_from_secret_manager(monkeypatch):
+    import json
+    from unittest.mock import MagicMock
+    from app.security import fetch_raw_gateway_credentials
+
+    # Clear env
+    monkeypatch.delenv("GATEWAY_TOKEN", raising=False)
+    monkeypatch.delenv("FIRESTORE_SA_KEY_JSON", raising=False)
+    monkeypatch.setenv("GCP_PROJECT", "initbtn-510706")
+
+    mock_payload = {
+        "gateway_token": "ast_live_from_sm_123",
+        "firestore_sa_key": {"type": "service_account", "project_id": "waffle-dominic"},
+    }
+
+    mock_sm_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.payload.data = json.dumps(mock_payload).encode("utf-8")
+    mock_sm_client.access_secret_version.return_value = mock_response
+
+    mock_sm_module = MagicMock()
+    mock_sm_module.SecretManagerServiceClient.return_value = mock_sm_client
+
+    import sys
+    monkeypatch.setitem(sys.modules, "google.cloud.secretmanager", mock_sm_module)
+
+    creds = fetch_raw_gateway_credentials()
+    assert creds["gateway_token"] == "ast_live_from_sm_123"
+    assert "waffle-dominic" in creds["firestore_sa_key_json"]
+
+
+def test_chat_store_manager_invalid_sa_key_fail_fast(monkeypatch):
+    from app.firestore_chat import ChatStoreManager
+    from app.config import settings
+
+    ChatStoreManager.set_store(None)
+    monkeypatch.setattr(settings, "firestore_sa_key_json", "{broken-json")
+
+    with pytest.raises(RuntimeError, match="Configured Firestore service account key is invalid"):
+        ChatStoreManager.get_store()
+
+
 

@@ -98,14 +98,18 @@ class Settings(BaseSettings):
     def resolved_gateway_token(self) -> str:
         if self.gateway_token.strip():
             return self.gateway_token.strip()
-        val = resolve_pass_secret("assist/gateway-token")
-        return val.strip() if val else ""
+        from app.security import fetch_raw_gateway_credentials
+
+        creds = fetch_raw_gateway_credentials()
+        return creds.get("gateway_token", "").strip()
 
     def resolved_firestore_sa_key_json(self) -> str:
         if self.firestore_sa_key_json.strip():
             return self.firestore_sa_key_json.strip()
-        val = resolve_pass_secret("gcp/waffle-dominic/service-account.json")
-        return val.strip() if val else ""
+        from app.security import fetch_raw_gateway_credentials
+
+        creds = fetch_raw_gateway_credentials()
+        return creds.get("firestore_sa_key_json", "").strip()
 
     def resolved_google_client_id(self) -> str:
         if self.google_client_id.strip():

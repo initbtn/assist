@@ -91,6 +91,91 @@ def fetch_raw_colab_secrets() -> dict[str, str]:
     }
 
 
+def fetch_raw_gateway_credentials() -> dict[str, str]:
+    """Fetches gateway credentials (gateway_token, firestore_sa_key_json).
+
+    Order of precedence:
+    1. Local environment variables (GATEWAY_TOKEN, FIRESTORE_SA_KEY_JSON)
+    2. GCP Secret Manager (assist-gateway-credentials in initbtn-510706)
+    3. Local pass fallback (assist/gateway-token, gcp/waffle-dominic/service-account.json)
+    """
+    gateway_token = os.getenv("GATEWAY_TOKEN", "").strip()
+    firestore_sa_key_json = os.getenv("FIRESTORE_SA_KEY_JSON", "").strip()
+
+    # 1. Check GCP Secret Manager if missing
+    if not gateway_token or not firestore_sa_key_json:
+        secret_name = os.getenv("GCP_GATEWAY_SECRET_NAME", "assist-gateway-credentials")
+        gcp_project = os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+        if not gcp_project:
+            try:
+                import google.auth  # type: ignore
+
+                _, default_project = google.auth.default()
+                if default_project:
+                    gcp_project = str(default_project).strip()
+            except Exception:
+                pass
+
+        if gcp_project:
+            try:
+                from google.cloud import secretmanager  # type: ignore
+
+                client = secretmanager.SecretManagerServiceClient()
+                resource_name = f"projects/{gcp_project}/secrets/{secret_name}/versions/latest"
+                response = client.access_secret_version(request={"name": resource_name})
+                payload_str = response.payload.data.decode("utf-8")
+                data = json.loads(payload_str)
+                if not gateway_token and "gateway_token" in data:
+                    gateway_token = str(data["gateway_token"]).strip()
+                if not firestore_sa_key_json and "firestore_sa_key" in data:
+                    sa = data["firestore_sa_key"]
+                    firestore_sa_key_json = json.dumps(sa) if isinstance(sa, dict) else str(sa).strip()
+                del payload_str
+                del data
+            except Exception as exc:
+                logger.debug("Failed to fetch gateway secret from GCP Secret Manager: %s", exc)
+
+    # 2. Local pass fallback if still missing
+    if not gateway_token:
+        try:
+            import subprocess
+
+            proc = subprocess.run(
+                ["pass", "show", "assist/gateway-token"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if proc.returncode == 0:
+                gateway_token = proc.stdout.splitlines()[0].strip()
+        except Exception as exc:
+            logger.debug("Could not read gateway_token from pass: %s", exc)
+
+    if not firestore_sa_key_json:
+        try:
+            import subprocess
+
+            proc = subprocess.run(
+                ["pass", "show", "gcp/waffle-dominic/service-account.json"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if proc.returncode == 0:
+                sa_raw = proc.stdout.strip()
+                if sa_raw:
+                    json.loads(sa_raw)
+                    firestore_sa_key_json = sa_raw
+        except Exception as exc:
+            logger.debug("Could not read firestore_sa_key_json from pass: %s", exc)
+
+    return {
+        "gateway_token": gateway_token,
+        "firestore_sa_key_json": firestore_sa_key_json,
+    }
+
+
+
 class EphemeralColabAuth:
     def __init__(self, token_bytes: bytearray, cf_token_bytes: bytearray) -> None:
         self.token_bytes = token_bytes

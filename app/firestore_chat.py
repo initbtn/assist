@@ -5,7 +5,7 @@ import logging
 from dataclasses import asdict, dataclass, field
 from typing import Any, Protocol
 
-from app.config import Settings
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -132,8 +132,17 @@ class FirestoreChatStore:
         is_new = not snap.exists
         msg_ref.set(message.to_dict(), merge=True)
 
-        # Update lastActiveAt on session
-        session_ref.set({"lastActiveAt": message.timestamp}, merge=True)
+        # Update lastActiveAt on session conditionally if message is newer
+        current_last_active = 0
+        session_snap = session_ref.get()
+        if session_snap.exists:
+            raw_val = (session_snap.to_dict() or {}).get("lastActiveAt", 0)
+            if isinstance(raw_val, (int, float)):
+                current_last_active = int(raw_val)
+
+        if message.timestamp > current_last_active:
+            session_ref.set({"lastActiveAt": message.timestamp}, merge=True)
+
         return is_new
 
     def get_session_with_messages(
@@ -206,7 +215,6 @@ class ChatStoreManager:
         if cls._instance is not None:
             return cls._instance
 
-        settings = Settings()
         sa_json_str = settings.resolved_firestore_sa_key_json()
         if sa_json_str:
             try:
@@ -218,6 +226,9 @@ class ChatStoreManager:
                 return cls._instance
             except Exception as e:
                 logger.error("Failed to build FirestoreChatStore from SA key: %s", e)
+                raise RuntimeError(
+                    f"Configured Firestore service account key is invalid: {e}"
+                ) from e
 
         logger.warning("Using InMemoryChatStore fallback (no valid Firestore SA key configured)")
         cls._instance = InMemoryChatStore()

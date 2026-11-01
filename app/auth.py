@@ -571,7 +571,7 @@ def verify_api_key(
         from app.config import settings
 
         configured_token = settings.resolved_gateway_token()
-        if configured_token and raw_key == configured_token:
+        if configured_token and secrets.compare_digest(raw_key, configured_token):
             return ApiTokenRecord(
                 id="gateway-static-token",
                 app_id="initbtn/blog",

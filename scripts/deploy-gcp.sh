@@ -29,18 +29,6 @@ fetch_required_secret() {
   printf '%s' "${val}"
 }
 
-fetch_required_multiline_secret_json() {
-  local var_name="$1"
-  local pass_path="$2"
-  local raw
-  raw="$(pass show "${pass_path}" 2>/dev/null || true)"
-  if [[ -z "${raw}" ]]; then
-    echo "ERROR: Required secret '${var_name}' is missing or empty at pass path '${pass_path}'. Aborting deploy." >&2
-    exit 1
-  fi
-  "${PYTHON_BIN}" -c "import json, sys; print(json.dumps(json.loads(sys.stdin.read())))" <<< "${raw}"
-}
-
 echo "[1/5] Resolving required production secrets from pass..."
 TELEGRAM_BOT_TOKEN="$(fetch_required_secret TELEGRAM_BOT_TOKEN telegram/domAssistBot/bot-token)"
 TELEGRAM_CHAT_ID="$(fetch_required_secret TELEGRAM_CHAT_ID telegram/domAssistBot/chat-id)"
@@ -49,7 +37,6 @@ OPS_TELEGRAM_CHAT_ID="$(fetch_required_secret OPS_TELEGRAM_CHAT_ID telegram/chat
 GITHUB_TOKEN="$(fetch_required_secret GITHUB_TOKEN github/gh-token)"
 GOOGLE_CLIENT_ID="$(fetch_required_secret GOOGLE_CLIENT_ID google/waffle-dominic/client_id)"
 GOOGLE_CLIENT_SECRET="$(fetch_required_secret GOOGLE_CLIENT_SECRET google/waffle-dominic/client_secret)"
-FIRESTORE_SA_KEY_JSON="$(fetch_required_multiline_secret_json FIRESTORE_SA_KEY_JSON gcp/waffle-dominic/service-account.json)"
 
 # 3. Configure inbound firewall (default: disabled, outbound-only mode)
 ENABLE_INBOUND_8001="${ENABLE_INBOUND_8001:-false}"
@@ -126,7 +113,6 @@ tar -C "${REPO_ROOT}" -czf - \
   printf 'ADMIN_EMAILS=%s\n' "${ADMIN_EMAILS:-cto.jsconn@gmail.com,dev.js.conn@gmail.com}"
   printf 'GOOGLE_CLIENT_ID=%s\n' "${GOOGLE_CLIENT_ID}"
   printf 'GOOGLE_CLIENT_SECRET=%s\n' "${GOOGLE_CLIENT_SECRET}"
-  printf 'FIRESTORE_SA_KEY_JSON=%s\n' "${FIRESTORE_SA_KEY_JSON}"
 } | gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command="
   set -euo pipefail
   TMP_ENV=\"/dev/shm/assist-env.\$\$\"
