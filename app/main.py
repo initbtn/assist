@@ -1,9 +1,18 @@
 from typing import Any, Callable
+import urllib.parse
+import logging
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from app.auth import ApiTokenRecord, TokenManager
+from app.auth_oauth import (
+    build_google_auth_url,
+    exchange_code_for_user_info,
+    get_oauth_store,
+    verify_oauth_admin_token,
+)
 from app.firebase_auth import verify_firebase_id_token
 from app.articles import (
     BriefingArticle,
@@ -148,7 +157,19 @@ def verify_admin_key(
         if len(parts) == 2 and parts[0].lower() == "bearer":
             raw_token = parts[1]
 
-    # 1. Try Firebase Auth ID Token verification
+    # 1. Try OAuth Admin Session Token
+    if raw_token:
+        oauth_email = verify_oauth_admin_token(raw_token)
+        if oauth_email:
+            allowed_emails = settings.resolved_admin_emails()
+            if oauth_email in allowed_emails:
+                return oauth_email
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Forbidden: email {oauth_email} is not an authorized administrator",
+            )
+
+    # 2. Try Firebase Auth ID Token verification (backward compatibility)
     if raw_token:
         fb_payload = verify_firebase_id_token(raw_token, settings.firebase_project_id)
         if fb_payload:
@@ -167,7 +188,7 @@ def verify_admin_key(
                 detail=f"Forbidden: email {email} is not an authorized administrator",
             )
 
-    # 2. Fallback to API Key authentication (for CI/CD or CLI usage)
+    # 3. Fallback to API Key authentication (for CI/CD or CLI usage)
     expected_key = settings.resolved_admin_api_key().strip()
     if expected_key and raw_token and raw_token.strip() == expected_key:
         return "admin_key_user"
@@ -175,7 +196,7 @@ def verify_admin_key(
     # If neither matched
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Unauthorized admin access: invalid or missing Firebase ID token / Admin key",
+        detail="Unauthorized admin access: invalid or missing OAuth Session token / Admin key",
     )
 
 
@@ -441,6 +462,66 @@ def create_app(
             enable_colab_gpu=colab_enabled,
         )
         return {"ok": True, "reply": reply}
+
+    @app.get("/v1/admin/auth/google/login")
+    def google_oauth_login() -> RedirectResponse:
+        client_id = settings.resolved_google_client_id()
+        if not client_id:
+            raise HTTPException(status_code=500, detail="Google OAuth client_id is not configured")
+        store = get_oauth_store()
+        state = store.create_state()
+        redirect_uri = settings.resolved_google_redirect_uri()
+        url = build_google_auth_url(state=state, redirect_uri=redirect_uri, client_id=client_id)
+        return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+
+    @app.get("/v1/admin/auth/google/callback")
+    def google_oauth_callback(
+        code: str | None = Query(default=None),
+        state: str | None = Query(default=None),
+        error: str | None = Query(default=None),
+    ) -> RedirectResponse:
+        admin_ui = f"{settings.public_ui_base_url.rstrip('/')}/admin"
+        if error:
+            return RedirectResponse(url=f"{admin_ui}#error={urllib.parse.quote(error)}", status_code=status.HTTP_302_FOUND)
+        if not code or not state:
+            return RedirectResponse(url=f"{admin_ui}#error=missing_code_or_state", status_code=status.HTTP_302_FOUND)
+
+        store = get_oauth_store()
+        if not store.verify_and_consume_state(state):
+            return RedirectResponse(url=f"{admin_ui}#error=invalid_or_expired_state", status_code=status.HTTP_302_FOUND)
+
+        client_id = settings.resolved_google_client_id()
+        client_secret = settings.resolved_google_client_secret()
+        redirect_uri = settings.resolved_google_redirect_uri()
+
+        try:
+            user_info = exchange_code_for_user_info(
+                code=code,
+                redirect_uri=redirect_uri,
+                client_id=client_id,
+                client_secret=client_secret,
+            )
+        except Exception as exc:
+            return RedirectResponse(url=f"{admin_ui}#error=token_exchange_failed", status_code=status.HTTP_302_FOUND)
+
+        email = str(user_info.get("email") or "").strip().lower()
+        email_verified = user_info.get("email_verified") is True
+        if not email or not email_verified:
+            return RedirectResponse(url=f"{admin_ui}#error=email_not_verified", status_code=status.HTTP_302_FOUND)
+
+        allowed = settings.resolved_admin_emails()
+        if email not in allowed:
+            return RedirectResponse(url=f"{admin_ui}#error=unauthorized_email", status_code=status.HTTP_302_FOUND)
+
+        session_token = store.create_session(email)
+        return RedirectResponse(
+            url=f"{admin_ui}#admin_token={session_token}&email={urllib.parse.quote(email)}",
+            status_code=status.HTTP_302_FOUND,
+        )
+
+    @app.get("/v1/admin/auth/me")
+    def get_current_admin(admin_email: str = Depends(verify_admin_key)) -> dict[str, Any]:
+        return {"email": admin_email, "role": "admin"}
 
     @app.post("/v1/admin/apps")
     def create_admin_app(payload: AppCreateRequest, _admin_guard: str = Depends(verify_admin_key)) -> dict[str, Any]:
