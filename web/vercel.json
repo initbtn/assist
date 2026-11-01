@@ -7,7 +7,7 @@
     },
     {
       "source": "/v1/:path*",
-      "destination": "https://assist.conn.ai.kr/v1/:path*"
+      "destination": "http://34.133.74.29:8001/v1/:path*"
     }
   ]
 }
