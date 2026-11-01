@@ -4,6 +4,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from app.auth import ApiTokenRecord, TokenManager
+from app.firebase_auth import verify_firebase_id_token
 from app.articles import (
     BriefingArticle,
     InMemoryArticleStore,
@@ -141,20 +142,35 @@ def verify_admin_key(
     x_admin_key: str | None = Header(default=None),
     authorization: str | None = Header(default=None),
 ) -> str:
-    expected_key = settings.resolved_admin_api_key().strip()
-    if not expected_key:
-        return "admin"
-    raw_key = x_admin_key
-    if not raw_key and authorization:
+    raw_token = x_admin_key
+    if not raw_token and authorization:
         parts = authorization.strip().split()
         if len(parts) == 2 and parts[0].lower() == "bearer":
-            raw_key = parts[1]
-    if not raw_key or raw_key.strip() != expected_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized admin access: invalid or missing admin key",
-        )
-    return "admin"
+            raw_token = parts[1]
+
+    # 1. Try Firebase Auth ID Token verification
+    if raw_token:
+        fb_payload = verify_firebase_id_token(raw_token, settings.firebase_project_id)
+        if fb_payload:
+            email = str(fb_payload.get("email") or "").strip().lower()
+            allowed_emails = settings.resolved_admin_emails()
+            if email and email in allowed_emails:
+                return email
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Forbidden: email {email} is not an authorized administrator",
+            )
+
+    # 2. Fallback to API Key authentication (for CI/CD or CLI usage)
+    expected_key = settings.resolved_admin_api_key().strip()
+    if expected_key and raw_token and raw_token.strip() == expected_key:
+        return "admin_key_user"
+
+    # If neither matched
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Unauthorized admin access: invalid or missing Firebase ID token / Admin key",
+    )
 
 
 

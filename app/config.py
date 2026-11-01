@@ -86,7 +86,15 @@ class Settings(BaseSettings):
     telegram_webhook_secret: str = ""
     telegram_allowed_chat_ids: str = ""
     admin_api_key: str = ""
+    admin_emails: str = "cto.jsconn@gmail.com"
+    firebase_project_id: str = "waffle-dominic"
     public_ui_base_url: str = "https://assist-brief.vercel.app"
+
+    def resolved_admin_emails(self) -> list[str]:
+        raw = self.admin_emails.strip()
+        if raw:
+            return [e.strip().lower() for e in raw.split(",") if e.strip()]
+        return ["cto.jsconn@gmail.com"]
 
     def resolved_admin_api_key(self) -> str:
         if self.admin_api_key.strip():
