@@ -18,6 +18,7 @@ class ChatSessionMeta:
     createdAt: int = 0
     lastActiveAt: int = 0
     unreadAdminCount: int = 0
+    telegramTopicId: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -60,6 +61,10 @@ class InMemoryChatStore:
         self.messages: dict[str, dict[str, ChatMessage]] = {}
 
     def upsert_session(self, session: ChatSessionMeta) -> None:
+        if session.sessionId in self.sessions:
+            existing = self.sessions[session.sessionId]
+            if (session.lastActiveAt == 0 or session.lastActiveAt < existing.lastActiveAt) and existing.lastActiveAt > 0:
+                session.lastActiveAt = existing.lastActiveAt
         self.sessions[session.sessionId] = session
         if session.sessionId not in self.messages:
             self.messages[session.sessionId] = {}
@@ -122,7 +127,15 @@ class FirestoreChatStore:
 
     def upsert_session(self, session: ChatSessionMeta) -> None:
         doc_ref = self.client.collection(self.COLLECTION_NAME).document(session.sessionId)
-        doc_ref.set(session.to_dict(), merge=True)
+        snap = doc_ref.get()
+        data = session.to_dict()
+        if snap.exists:
+            existing_last = (snap.to_dict() or {}).get("lastActiveAt", 0)
+            if isinstance(existing_last, (int, float)) and existing_last > 0:
+                if session.lastActiveAt == 0 or session.lastActiveAt < existing_last:
+                    data["lastActiveAt"] = int(existing_last)
+                    session.lastActiveAt = int(existing_last)
+        doc_ref.set(data, merge=True)
 
     def add_message(self, session_id: str, message: ChatMessage) -> bool:
         session_ref = self.client.collection(self.COLLECTION_NAME).document(session_id)
@@ -161,6 +174,7 @@ class FirestoreChatStore:
             createdAt=data.get("createdAt", 0),
             lastActiveAt=data.get("lastActiveAt", 0),
             unreadAdminCount=data.get("unreadAdminCount", 0),
+            telegramTopicId=data.get("telegramTopicId"),
         )
 
         from google.cloud import firestore
@@ -202,6 +216,7 @@ class FirestoreChatStore:
                     createdAt=data.get("createdAt", 0),
                     lastActiveAt=data.get("lastActiveAt", 0),
                     unreadAdminCount=data.get("unreadAdminCount", 0),
+                    telegramTopicId=data.get("telegramTopicId"),
                 )
             )
         return sessions

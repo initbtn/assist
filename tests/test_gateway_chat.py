@@ -8,6 +8,10 @@ from app.main import app
 
 @pytest.fixture(autouse=True)
 def setup_chat_test_environment(monkeypatch):
+    from app.security import fetch_raw_gateway_credentials
+    if hasattr(fetch_raw_gateway_credentials, "cache_clear"):
+        fetch_raw_gateway_credentials.cache_clear()
+
     # Setup in-memory token store with a valid B2B test token
     token_store = InMemoryTokenStore()
     app_rec = token_store.create_app(name="initbtn/blog", description="Blog tenant")
@@ -25,6 +29,8 @@ def setup_chat_test_environment(monkeypatch):
     }
 
     ChatStoreManager.set_store(None)
+    if hasattr(fetch_raw_gateway_credentials, "cache_clear"):
+        fetch_raw_gateway_credentials.cache_clear()
 
 
 def test_gateway_chat_unauthorized():
@@ -323,6 +329,9 @@ def test_fetch_raw_gateway_credentials_from_secret_manager(monkeypatch):
     from unittest.mock import MagicMock
     from app.security import fetch_raw_gateway_credentials
 
+    if hasattr(fetch_raw_gateway_credentials, "cache_clear"):
+        fetch_raw_gateway_credentials.cache_clear()
+
     # Clear env
     monkeypatch.delenv("GATEWAY_TOKEN", raising=False)
     monkeypatch.delenv("FIRESTORE_SA_KEY_JSON", raising=False)
@@ -358,6 +367,183 @@ def test_chat_store_manager_invalid_sa_key_fail_fast(monkeypatch):
 
     with pytest.raises(RuntimeError, match="Configured Firestore service account key is invalid"):
         ChatStoreManager.get_store()
+
+
+def test_fetch_raw_gateway_credentials_lru_cache(monkeypatch):
+    import json
+    from unittest.mock import MagicMock
+    from app.security import fetch_raw_gateway_credentials
+
+    # Clear lru_cache first
+    if hasattr(fetch_raw_gateway_credentials, "cache_clear"):
+        fetch_raw_gateway_credentials.cache_clear()
+
+    monkeypatch.delenv("GATEWAY_TOKEN", raising=False)
+    monkeypatch.delenv("FIRESTORE_SA_KEY_JSON", raising=False)
+    monkeypatch.setenv("GCP_PROJECT", "initbtn-510706")
+
+    mock_sm_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.payload.data = json.dumps({"gateway_token": "cached_tok", "firestore_sa_key": {}}).encode("utf-8")
+    mock_sm_client.access_secret_version.return_value = mock_response
+
+    mock_sm_module = MagicMock()
+    mock_sm_module.SecretManagerServiceClient.return_value = mock_sm_client
+
+    import sys
+    monkeypatch.setitem(sys.modules, "google.cloud.secretmanager", mock_sm_module)
+
+    # 1. First call -> executes fetch
+    creds1 = fetch_raw_gateway_credentials()
+    assert creds1["gateway_token"] == "cached_tok"
+    assert mock_sm_client.access_secret_version.call_count == 1
+
+    # 2. Second call -> served from lru_cache, no additional SecretManager API call
+    creds2 = fetch_raw_gateway_credentials()
+    assert creds2["gateway_token"] == "cached_tok"
+    assert mock_sm_client.access_secret_version.call_count == 1
+    assert hasattr(fetch_raw_gateway_credentials, "cache_info")
+    assert fetch_raw_gateway_credentials.cache_info().hits >= 1
+
+
+def test_chat_session_upsert_timestamp_guard(setup_chat_test_environment):
+    from unittest.mock import MagicMock
+    from app.firestore_chat import ChatSessionMeta, FirestoreChatStore
+
+    client = TestClient(app)
+    token = setup_chat_test_environment["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 1. Create initial session with lastActiveAt = 5000
+    res = client.post(
+        "/v1/gateway/chat/sessions",
+        headers=headers,
+        json={
+            "sessionId": "sess-guard",
+            "senderName": "GuardUser",
+            "contact": "guard@example.com",
+            "createdAt": 1000,
+            "lastActiveAt": 5000,
+            "unreadAdminCount": 0,
+        },
+    )
+    assert res.status_code == 200
+
+    # 2. Upsert with lastActiveAt = 0 (e.g. client omits or defaults to 0) -> must preserve 5000
+    res_zero = client.post(
+        "/v1/gateway/chat/sessions",
+        headers=headers,
+        json={
+            "sessionId": "sess-guard",
+            "senderName": "GuardUser",
+            "contact": "guard@example.com",
+            "createdAt": 1000,
+            "lastActiveAt": 0,
+            "unreadAdminCount": 1,
+        },
+    )
+    assert res_zero.status_code == 200
+
+    detail = client.get("/v1/gateway/chat/sessions/sess-guard", headers=headers).json()
+    assert detail["session"]["lastActiveAt"] == 5000
+    assert detail["session"]["unreadAdminCount"] == 1
+
+    # 3. Upsert with older lastActiveAt = 3000 -> must preserve 5000
+    res_older = client.post(
+        "/v1/gateway/chat/sessions",
+        headers=headers,
+        json={
+            "sessionId": "sess-guard",
+            "senderName": "GuardUser",
+            "contact": "guard@example.com",
+            "createdAt": 1000,
+            "lastActiveAt": 3000,
+            "unreadAdminCount": 2,
+        },
+    )
+    assert res_older.status_code == 200
+
+    detail2 = client.get("/v1/gateway/chat/sessions/sess-guard", headers=headers).json()
+    assert detail2["session"]["lastActiveAt"] == 5000
+    assert detail2["session"]["unreadAdminCount"] == 2
+
+    # 4. Upsert with newer lastActiveAt = 7000 -> updates to 7000
+    res_newer = client.post(
+        "/v1/gateway/chat/sessions",
+        headers=headers,
+        json={
+            "sessionId": "sess-guard",
+            "senderName": "GuardUser",
+            "contact": "guard@example.com",
+            "createdAt": 1000,
+            "lastActiveAt": 7000,
+            "unreadAdminCount": 3,
+        },
+    )
+    assert res_newer.status_code == 200
+
+    detail3 = client.get("/v1/gateway/chat/sessions/sess-guard", headers=headers).json()
+    assert detail3["session"]["lastActiveAt"] == 7000
+    assert detail3["session"]["unreadAdminCount"] == 3
+
+    # 5. Unit mock test for FirestoreChatStore.upsert_session guard
+    mock_client = MagicMock()
+    mock_coll = MagicMock()
+    mock_doc = MagicMock()
+    mock_client.collection.return_value = mock_coll
+    mock_coll.document.return_value = mock_doc
+
+    # Mock existing doc with lastActiveAt = 5000
+    mock_snap = MagicMock()
+    mock_snap.exists = True
+    mock_snap.to_dict.return_value = {"lastActiveAt": 5000}
+    mock_doc.get.return_value = mock_snap
+
+    fs_store = FirestoreChatStore(client=mock_client)
+    # Upsert with lastActiveAt = 0
+    fs_sess = ChatSessionMeta(sessionId="s-fs", senderName="User", createdAt=1, lastActiveAt=0)
+    fs_store.upsert_session(fs_sess)
+    # The set call should NOT overwrite lastActiveAt with 0 (or should omit it / retain 5000)
+    args, kwargs = mock_doc.set.call_args
+    set_dict = args[0]
+    assert set_dict["lastActiveAt"] == 5000
+
+
+def test_chat_session_telegram_topic_id_support(setup_chat_test_environment):
+    client = TestClient(app)
+    token = setup_chat_test_environment["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 1. Upsert session with telegramTopicId = 777
+    res = client.post(
+        "/v1/gateway/chat/sessions",
+        headers=headers,
+        json={
+            "sessionId": "sess-topic-1",
+            "senderName": "TopicUser",
+            "contact": "topic@example.com",
+            "createdAt": 1000,
+            "lastActiveAt": 1000,
+            "unreadAdminCount": 0,
+            "telegramTopicId": 777,
+        },
+    )
+    assert res.status_code == 200
+
+    # 2. Detail returns telegramTopicId
+    res_detail = client.get("/v1/gateway/chat/sessions/sess-topic-1", headers=headers)
+    assert res_detail.status_code == 200
+    detail = res_detail.json()
+    assert detail["session"]["telegramTopicId"] == 777
+
+    # 3. List returns telegramTopicId
+    res_list = client.get("/v1/gateway/chat/sessions?limit=10", headers=headers)
+    assert res_list.status_code == 200
+    sessions = res_list.json()["sessions"]
+    matching = [s for s in sessions if s["sessionId"] == "sess-topic-1"]
+    assert len(matching) == 1
+    assert matching[0]["telegramTopicId"] == 777
+
 
 
 
