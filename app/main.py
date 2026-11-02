@@ -1,181 +1,31 @@
 from typing import Any, Callable
-import urllib.parse
-import logging
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
-from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, Field
+from fastapi import FastAPI
 
-from app.auth import ApiTokenRecord, TokenManager, verify_api_key
-from app.auth_oauth import (
-    build_google_auth_url,
-    exchange_code_for_user_info,
-    get_oauth_store,
-    verify_oauth_admin_token,
-)
-from app.firebase_auth import verify_firebase_id_token
-from app.gateway_chat import router as gateway_chat_router
-from app.articles import (
-    BriefingArticle,
-    InMemoryArticleStore,
-    ModelBriefComparison,
-    build_briefing_article,
-    compare_briefing_models,
-    format_telegram_brief_message,
-)
-from app.collectors import (
-    CollectionSummary,
-    _default_github_get,
-    collect_and_ingest_targets,
-    seed_initial_knowledge,
-)
+from app.api.deps import verify_admin_key
+from app.api.v1.api import api_router
+from app.articles import InMemoryArticleStore
+from app.auth_oauth import exchange_code_for_user_info
+from app.collectors import _default_github_get
 from app.config import settings
-from app.ingest import ingest_document
-from app.rag import (
-    FakeMemoryRetriever,
-    LLMProtocol,
-    PGVectorRetriever,
-    QueryResult,
-    answer_question,
-    get_llm,
-    resolve_ollama_model_name,
+from app.gateway_chat import router as gateway_chat_router
+from app.rag import FakeMemoryRetriever, LLMProtocol, PGVectorRetriever
+from app.schemas import (
+    AppCreateRequest,
+    BotConfigUpdateRequest,
+    BriefCompareRequest,
+    BriefCompareResponse,
+    BriefSendRequest,
+    BriefSendResponse,
+    CollectRequest,
+    IngestRequest,
+    IngestResponse,
+    QueryRequest,
+    TargetStatusPatch,
+    TokenCreateRequest,
+    TokenRefreshRequest,
 )
-from app.targets import (
-    InMemoryDeduplicationStore,
-    InMemoryTargetStore,
-    ResearchTarget,
-    ResearchTargetCreate,
-)
-from app.telegram import handle_telegram_update, send_telegram_message
-
-
-class TargetStatusPatch(BaseModel):
-    is_active: bool
-
-
-class IngestRequest(BaseModel):
-    text: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    chunk_size: int = 1000
-    chunk_overlap: int = 200
-
-
-class IngestResponse(BaseModel):
-    ingested_chunks: int
-    skipped_duplicate: bool
-
-
-class QueryRequest(BaseModel):
-    question: str
-    domain: str | None = None
-    target_name: str | None = None
-    k: int = 4
-
-
-class CollectRequest(BaseModel):
-    domain: str | None = None
-    include_seed: bool = False
-    per_target_limit: int = 3
-
-
-class BriefSendRequest(BaseModel):
-    chat_id: str | None = None
-    domain: str | None = None
-    date_str: str | None = None
-
-
-class BriefSendResponse(BaseModel):
-    sent: bool
-    chat_id: str
-    brief: str
-    article_slug: str
-    article_url: str
-    summary_lines: list[str]
-
-
-class BriefCompareRequest(BaseModel):
-    models: list[str] = Field(default_factory=lambda: ["A", "C"])
-    domain: str | None = None
-    date_str: str | None = None
-
-
-class BriefCompareResponse(BaseModel):
-    date: str
-    comparisons: dict[str, ModelBriefComparison]
-
-
-class AppCreateRequest(BaseModel):
-    name: str
-    description: str = ""
-
-
-class TokenCreateRequest(BaseModel):
-    name: str
-    ttl_days: int = 30
-
-
-class TokenRefreshRequest(BaseModel):
-    refresh_token: str
-
-
-class BotConfigUpdateRequest(BaseModel):
-    allowed_chat_ids: list[str] | None = None
-    enable_colab_gpu: bool | None = None
-    rate_limit_rpm: int | None = None
-
-
-def verify_admin_key(
-    x_admin_key: str | None = Header(default=None),
-    authorization: str | None = Header(default=None),
-) -> str:
-    raw_token = x_admin_key
-    if not raw_token and authorization:
-        parts = authorization.strip().split()
-        if len(parts) == 2 and parts[0].lower() == "bearer":
-            raw_token = parts[1]
-
-    # 1. Try OAuth Admin Session Token
-    if raw_token:
-        oauth_email = verify_oauth_admin_token(raw_token)
-        if oauth_email:
-            allowed_emails = settings.resolved_admin_emails()
-            if oauth_email in allowed_emails:
-                return oauth_email
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Forbidden: email {oauth_email} is not an authorized administrator",
-            )
-
-    # 2. Try Firebase Auth ID Token verification (backward compatibility)
-    if raw_token:
-        fb_payload = verify_firebase_id_token(raw_token, settings.firebase_project_id)
-        if fb_payload:
-            email = str(fb_payload.get("email") or "").strip().lower()
-            email_verified = fb_payload.get("email_verified") is True
-            allowed_emails = settings.resolved_admin_emails()
-            if email and email_verified and email in allowed_emails:
-                return email
-            if email and not email_verified and email in allowed_emails:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Forbidden: email {email} is not verified",
-                )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Forbidden: email {email} is not an authorized administrator",
-            )
-
-    # 3. Fallback to API Key authentication (for CI/CD or CLI usage)
-    expected_key = settings.resolved_admin_api_key().strip()
-    if expected_key and raw_token and raw_token.strip() == expected_key:
-        return "admin_key_user"
-
-    # If neither matched
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Unauthorized admin access: invalid or missing OAuth Session token / Admin key",
-    )
-
+from app.targets import InMemoryDeduplicationStore, InMemoryTargetStore
 
 
 def create_app(
@@ -193,454 +43,53 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(title="assist — Personal Dev Trend RAG Assistant")
 
-    t_store = target_store if target_store is not None else InMemoryTargetStore(seed=True)
-    d_store = dedup_store if dedup_store is not None else InMemoryDeduplicationStore()
-    mem_retriever = (
+    # State injection for dependency injection (DI) support
+    app.state.target_store = (
+        target_store if target_store is not None else InMemoryTargetStore(seed=True)
+    )
+    app.state.dedup_store = (
+        dedup_store if dedup_store is not None else InMemoryDeduplicationStore()
+    )
+    app.state.retriever = (
         retriever
         if retriever is not None
         else (PGVectorRetriever() if settings.use_pgvector else FakeMemoryRetriever())
     )
-    a_store = article_store if article_store is not None else InMemoryArticleStore()
-    gh_get = github_http_get if github_http_get is not None else _default_github_get
-    expected_secret = (
-        webhook_secret
-        if webhook_secret is not None
-        else settings.telegram_webhook_secret
+    app.state.article_store = (
+        article_store if article_store is not None else InMemoryArticleStore()
     )
-    resolved_ui_url = (
-        base_ui_url.strip()
-        if base_ui_url is not None and base_ui_url.strip()
-        else settings.public_ui_base_url
-    )
+    app.state.llm = llm
+    app.state.telegram_sender = telegram_sender
+    app.state.github_http_get = github_http_get
+    app.state.webhook_secret = webhook_secret
+    app.state.default_chat_id = default_chat_id
+    app.state.base_ui_url = base_ui_url
 
-    def _resolve_llm() -> LLMProtocol:
-        return llm if llm is not None else get_llm(settings)
-
-    def _resolve_chat_id(explicit_chat_id: str | None = None) -> str:
-        if explicit_chat_id and explicit_chat_id.strip():
-            return explicit_chat_id.strip()
-        if default_chat_id is not None and default_chat_id.strip():
-            return default_chat_id.strip()
-        return settings.resolved_telegram_chat_id()
-
-    def _send_telegram(chat_id: str, text: str) -> None:
-        if telegram_sender is not None:
-            telegram_sender(chat_id, text)
-            return
-        send_telegram_message(
-            text=text,
-            bot_token=settings.resolved_telegram_bot_token(),
-            chat_id=chat_id,
-        )
-
-    @app.get("/health")
-    def health() -> dict[str, str]:
-        return {"status": "ok"}
-
-    @app.get("/targets", response_model=list[ResearchTarget])
-    def list_targets(
-        domain: str | None = Query(default=None),
-        active_only: bool = Query(default=True),
-    ) -> list[ResearchTarget]:
-        return t_store.list_targets(domain=domain, active_only=active_only)
-
-    @app.post(
-        "/targets",
-        response_model=ResearchTarget,
-        status_code=status.HTTP_201_CREATED,
-    )
-    def create_target(payload: ResearchTargetCreate) -> ResearchTarget:
-        try:
-            return t_store.add_target(payload)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=str(exc),
-            ) from exc
-
-    @app.patch("/targets/{target_id}", response_model=ResearchTarget)
-    def patch_target(
-        target_id: str,
-        payload: TargetStatusPatch,
-    ) -> ResearchTarget:
-        try:
-            return t_store.set_active(target_id, is_active=payload.is_active)
-        except KeyError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=str(exc),
-            ) from exc
-
-    @app.post("/ingest", response_model=IngestResponse)
-    def ingest_endpoint(payload: IngestRequest) -> IngestResponse:
-        try:
-            count = ingest_document(
-                text=payload.text,
-                metadata=payload.metadata,
-                vector_store=mem_retriever,
-                dedup_store=d_store,
-                chunk_size=payload.chunk_size,
-                chunk_overlap=payload.chunk_overlap,
-            )
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=str(exc),
-            ) from exc
-
-        skipped = count == 0 and bool(payload.text.strip())
-        return IngestResponse(
-            ingested_chunks=count,
-            skipped_duplicate=skipped,
-        )
-
-    @app.post("/collect", response_model=CollectionSummary)
-    def collect_endpoint(payload: CollectRequest) -> CollectionSummary:
-        seeded = 0
-        if payload.include_seed:
-            seeded = seed_initial_knowledge(
-                vector_store=mem_retriever,
-                dedup_store=d_store,
-            )
-        summary = collect_and_ingest_targets(
-            target_store=t_store,
-            vector_store=mem_retriever,
-            dedup_store=d_store,
-            http_get=gh_get,
-            domain=payload.domain,
-            per_target_limit=payload.per_target_limit,
-        )
-        return summary.model_copy(update={"seeded_chunks": seeded})
-
-    @app.post("/query", response_model=QueryResult)
-    def query_endpoint(payload: QueryRequest) -> QueryResult:
-        try:
-            return answer_question(
-                payload.question,
-                retriever=mem_retriever,
-                llm=_resolve_llm(),
-                domain=payload.domain,
-                target_name=payload.target_name,
-                k=payload.k,
-            )
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=str(exc),
-            ) from exc
-
-    @app.get("/articles", response_model=list[BriefingArticle])
-    def list_articles() -> list[BriefingArticle]:
-        return a_store.list_articles()
-
-    @app.get("/articles/{slug}", response_model=BriefingArticle)
-    def get_article(slug: str) -> BriefingArticle:
-        article = a_store.get(slug)
-        if article is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Article not found: {slug}",
-            )
-        return article
-
-    @app.post("/brief/send", response_model=BriefSendResponse)
-    def send_brief_endpoint(payload: BriefSendRequest) -> BriefSendResponse:
-        target_chat = _resolve_chat_id(payload.chat_id)
-        if not target_chat:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="chat_id is required",
-            )
-        docs = mem_retriever.search("brief", domain=payload.domain, k=30)
-        article = build_briefing_article(
-            docs,
-            llm=_resolve_llm(),
-            date_str=payload.date_str,
-            base_ui_url=resolved_ui_url,
-        )
-        a_store.save(article)
-        brief_text = format_telegram_brief_message(article)
-        _send_telegram(target_chat, brief_text)
-        return BriefSendResponse(
-            sent=True,
-            chat_id=target_chat,
-            brief=brief_text,
-            article_slug=article.slug,
-            article_url=article.article_url,
-            summary_lines=article.summary_lines,
-        )
-
-    @app.post("/brief/compare", response_model=BriefCompareResponse)
-    def compare_brief_endpoint(payload: BriefCompareRequest) -> BriefCompareResponse:
-        if not payload.models:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="models must not be empty",
-            )
-        model_llms: dict[str, LLMProtocol] = {}
-        try:
-            for item in payload.models:
-                resolved_name = resolve_ollama_model_name(item)
-                model_llms[resolved_name] = (
-                    llm
-                    if llm is not None
-                    else get_llm(settings, model_override=resolved_name)
-                )
-            docs = mem_retriever.search("brief", domain=payload.domain, k=30)
-            comparisons = compare_briefing_models(
-                docs,
-                model_llms=model_llms,
-                date_str=payload.date_str,
-                base_ui_url=resolved_ui_url,
-            )
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=str(exc),
-            ) from exc
-
-        resolved_date = (
-            next(iter(comparisons.values())).article_url.rsplit("/", 1)[-1]
-            if comparisons
-            else (payload.date_str or "")
-        )
-        return BriefCompareResponse(
-            date=resolved_date,
-            comparisons=comparisons,
-        )
-
-
-    @app.post("/webhook/telegram")
-    def telegram_webhook(
-        update: dict[str, Any],
-        x_telegram_bot_api_secret_token: str | None = Header(default=None),
-    ) -> dict[str, Any]:
-        if expected_secret and x_telegram_bot_api_secret_token != expected_secret:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Invalid webhook secret token",
-            )
-
-        store = TokenManager.get_store()
-        raw_env_chats = [c.strip() for c in settings.telegram_allowed_chat_ids.split(",") if c.strip()] if settings.telegram_allowed_chat_ids.strip() else []
-        app_chats = list(store.get_all_allowed_chat_ids()) if hasattr(store, "get_all_allowed_chat_ids") else []
-        effective_chats = list(set(raw_env_chats + app_chats)) if (raw_env_chats or app_chats) else None
-        colab_enabled = store.is_colab_gpu_enabled() if hasattr(store, "is_colab_gpu_enabled") else True
-
-        reply = handle_telegram_update(
-            update,
-            target_store=t_store,
-            retriever=mem_retriever,
-            llm=_resolve_llm(),
-            sender=_send_telegram,
-            article_store=a_store,
-            base_ui_url=resolved_ui_url,
-            allowed_chat_ids=effective_chats,
-            enable_colab_gpu=colab_enabled,
-        )
-        return {"ok": True, "reply": reply}
-
-    @app.get("/v1/admin/auth/google/login")
-    def google_oauth_login() -> RedirectResponse:
-        client_id = settings.resolved_google_client_id()
-        if not client_id:
-            raise HTTPException(status_code=500, detail="Google OAuth client_id is not configured")
-        store = get_oauth_store()
-        state = store.create_state()
-        redirect_uri = settings.resolved_google_redirect_uri()
-        url = build_google_auth_url(state=state, redirect_uri=redirect_uri, client_id=client_id)
-        return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
-
-    @app.get("/v1/admin/auth/google/callback")
-    def google_oauth_callback(
-        code: str | None = Query(default=None),
-        state: str | None = Query(default=None),
-        error: str | None = Query(default=None),
-    ) -> RedirectResponse:
-        admin_ui = f"{settings.public_ui_base_url.rstrip('/')}/admin"
-        if error:
-            return RedirectResponse(url=f"{admin_ui}#error={urllib.parse.quote(error)}", status_code=status.HTTP_302_FOUND)
-        if not code or not state:
-            return RedirectResponse(url=f"{admin_ui}#error=missing_code_or_state", status_code=status.HTTP_302_FOUND)
-
-        store = get_oauth_store()
-        if not store.verify_and_consume_state(state):
-            return RedirectResponse(url=f"{admin_ui}#error=invalid_or_expired_state", status_code=status.HTTP_302_FOUND)
-
-        client_id = settings.resolved_google_client_id()
-        client_secret = settings.resolved_google_client_secret()
-        redirect_uri = settings.resolved_google_redirect_uri()
-
-        try:
-            user_info = exchange_code_for_user_info(
-                code=code,
-                redirect_uri=redirect_uri,
-                client_id=client_id,
-                client_secret=client_secret,
-            )
-        except Exception as exc:
-            return RedirectResponse(url=f"{admin_ui}#error=token_exchange_failed", status_code=status.HTTP_302_FOUND)
-
-        email = str(user_info.get("email") or "").strip().lower()
-        email_verified = user_info.get("email_verified") is True
-        if not email or not email_verified:
-            return RedirectResponse(url=f"{admin_ui}#error=email_not_verified", status_code=status.HTTP_302_FOUND)
-
-        allowed = settings.resolved_admin_emails()
-        if email not in allowed:
-            return RedirectResponse(url=f"{admin_ui}#error=unauthorized_email", status_code=status.HTTP_302_FOUND)
-
-        session_token = store.create_session(email)
-        return RedirectResponse(
-            url=f"{admin_ui}#admin_token={session_token}&email={urllib.parse.quote(email)}",
-            status_code=status.HTTP_302_FOUND,
-        )
-
-    @app.get("/v1/admin/auth/me")
-    def get_current_admin(admin_email: str = Depends(verify_admin_key)) -> dict[str, Any]:
-        return {"email": admin_email, "role": "admin"}
-
-    @app.post("/v1/admin/apps")
-    def create_admin_app(payload: AppCreateRequest, _admin_guard: str = Depends(verify_admin_key)) -> dict[str, Any]:
-        store = TokenManager.get_store()
-        rec = store.create_app(payload.name, payload.description)
-        return {
-            "id": rec.id,
-            "name": rec.name,
-            "description": rec.description,
-            "created_at": rec.created_at.isoformat(),
-        }
-
-    @app.get("/v1/admin/apps")
-    def list_admin_apps(_admin_guard: str = Depends(verify_admin_key)) -> list[dict[str, Any]]:
-        store = TokenManager.get_store()
-        return [
-            {
-                "id": a.id,
-                "name": a.name,
-                "description": a.description,
-                "is_active": a.is_active,
-                "created_at": a.created_at.isoformat(),
-            }
-            for a in store.list_apps()
-        ]
-
-    @app.post("/v1/admin/apps/{app_id}/tokens")
-    def create_admin_app_token(
-        app_id: str,
-        payload: TokenCreateRequest,
-        _admin_guard: str = Depends(verify_admin_key),
-    ) -> dict[str, Any]:
-        store = TokenManager.get_store()
-        app_rec = store.get_app(app_id)
-        if not app_rec:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App not found")
-        pair = store.create_token(app_id, payload.name, payload.ttl_days)
-        return {
-            "id": pair.id,
-            "app_id": pair.app_id,
-            "name": pair.name,
-            "api_key": pair.api_key,
-            "refresh_token": pair.refresh_token,
-            "key_prefix": pair.key_prefix,
-            "expires_at": pair.expires_at.isoformat(),
-        }
-
-    @app.get("/v1/admin/apps/{app_id}/tokens")
-    def list_admin_app_tokens(
-        app_id: str,
-        _admin_guard: str = Depends(verify_admin_key),
-    ) -> list[dict[str, Any]]:
-        store = TokenManager.get_store()
-        tokens = store.list_tokens(app_id)
-        return [
-            {
-                "id": t.id,
-                "app_id": t.app_id,
-                "name": t.name,
-                "key_prefix": t.key_prefix,
-                "expires_at": t.expires_at.isoformat(),
-                "is_active": t.is_active,
-                "created_at": t.created_at.isoformat(),
-                "last_used_at": t.last_used_at.isoformat() if t.last_used_at else None,
-            }
-            for t in tokens
-        ]
-
-    @app.delete("/v1/admin/tokens/{token_id}")
-    def revoke_admin_token(
-        token_id: str,
-        _admin_guard: str = Depends(verify_admin_key),
-    ) -> dict[str, Any]:
-        store = TokenManager.get_store()
-        success = store.revoke_token(token_id)
-        if not success:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Token not found")
-        return {"revoked": True, "token_id": token_id}
-
-    @app.post("/v1/auth/tokens/refresh")
-    def refresh_auth_token(payload: TokenRefreshRequest) -> dict[str, Any]:
-        store = TokenManager.get_store()
-        new_pair = store.refresh_token_pair(payload.refresh_token)
-        if not new_pair:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired refresh token",
-            )
-        return {
-            "id": new_pair.id,
-            "app_id": new_pair.app_id,
-            "name": new_pair.name,
-            "api_key": new_pair.api_key,
-            "refresh_token": new_pair.refresh_token,
-            "key_prefix": new_pair.key_prefix,
-            "expires_at": new_pair.expires_at.isoformat(),
-        }
-
-    @app.get("/v1/admin/apps/{app_id}/config")
-    def get_admin_bot_config(
-        app_id: str,
-        _admin_guard: str = Depends(verify_admin_key),
-    ) -> dict[str, Any]:
-        store = TokenManager.get_store()
-        cfg = store.get_bot_config(app_id)
-        return {
-            "app_id": cfg.app_id,
-            "allowed_chat_ids": cfg.allowed_chat_ids,
-            "enable_colab_gpu": cfg.enable_colab_gpu,
-            "rate_limit_rpm": cfg.rate_limit_rpm,
-        }
-
-    @app.put("/v1/admin/apps/{app_id}/config")
-    def update_admin_bot_config(
-        app_id: str,
-        payload: BotConfigUpdateRequest,
-        _admin_guard: str = Depends(verify_admin_key),
-    ) -> dict[str, Any]:
-        store = TokenManager.get_store()
-        cfg = store.update_bot_config(
-            app_id,
-            allowed_chat_ids=payload.allowed_chat_ids,
-            enable_colab_gpu=payload.enable_colab_gpu,
-            rate_limit_rpm=payload.rate_limit_rpm,
-        )
-        return {
-            "app_id": cfg.app_id,
-            "allowed_chat_ids": cfg.allowed_chat_ids,
-            "enable_colab_gpu": cfg.enable_colab_gpu,
-            "rate_limit_rpm": cfg.rate_limit_rpm,
-        }
-
-    @app.get("/v1/chat/models")
-    def list_chat_models(token: ApiTokenRecord = Depends(verify_api_key)) -> dict[str, Any]:
-        return {
-            "models": [settings.llm_model_name, settings.ollama_model_name],
-            "authenticated_app_id": token.app_id,
-        }
-
+    # Mount routers
+    app.include_router(api_router)
     app.include_router(gateway_chat_router, prefix="/v1/gateway/chat", tags=["gateway_chat"])
 
     return app
 
 
 app = create_app()
+
+__all__ = [
+    "app",
+    "create_app",
+    "verify_admin_key",
+    "exchange_code_for_user_info",
+    "TargetStatusPatch",
+    "IngestRequest",
+    "IngestResponse",
+    "QueryRequest",
+    "CollectRequest",
+    "BriefSendRequest",
+    "BriefSendResponse",
+    "BriefCompareRequest",
+    "BriefCompareResponse",
+    "AppCreateRequest",
+    "TokenCreateRequest",
+    "TokenRefreshRequest",
+    "BotConfigUpdateRequest",
+]
