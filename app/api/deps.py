@@ -22,46 +22,50 @@ def verify_admin_key(
         if len(parts) == 2 and parts[0].lower() == "bearer":
             raw_token = parts[1]
 
-    # 1. Try OAuth Admin Session Token
-    if raw_token:
-        oauth_email = verify_oauth_admin_token(raw_token)
-        if oauth_email:
-            allowed_emails = settings.resolved_admin_emails()
-            if oauth_email in allowed_emails:
-                return oauth_email
+    if not raw_token or not raw_token.strip():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized admin access: missing admin credentials",
+        )
+
+    # 1. Primary (Auth v2): Stateless Firebase Auth ID Token (RS256 JWT)
+    fb_payload = verify_firebase_id_token(raw_token, settings.firebase_project_id)
+    if fb_payload:
+        email = str(fb_payload.get("email") or "").strip().lower()
+        email_verified = fb_payload.get("email_verified") is True
+        allowed_emails = settings.resolved_admin_emails()
+        if email and email_verified and email in allowed_emails:
+            return email
+        if email and not email_verified and email in allowed_emails:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Forbidden: email {oauth_email} is not an authorized administrator",
+                detail=f"Forbidden: email {email} is not verified",
             )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Forbidden: email {email} is not an authorized administrator",
+        )
 
-    # 2. Try Firebase Auth ID Token verification (backward compatibility)
-    if raw_token:
-        fb_payload = verify_firebase_id_token(raw_token, settings.firebase_project_id)
-        if fb_payload:
-            email = str(fb_payload.get("email") or "").strip().lower()
-            email_verified = fb_payload.get("email_verified") is True
-            allowed_emails = settings.resolved_admin_emails()
-            if email and email_verified and email in allowed_emails:
-                return email
-            if email and not email_verified and email in allowed_emails:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Forbidden: email {email} is not verified",
-                )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Forbidden: email {email} is not an authorized administrator",
-            )
+    # 2. Backward Compatibility: Legacy in-memory OAuth Session Token
+    oauth_email = verify_oauth_admin_token(raw_token)
+    if oauth_email:
+        allowed_emails = settings.resolved_admin_emails()
+        if oauth_email in allowed_emails:
+            return oauth_email
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Forbidden: email {oauth_email} is not an authorized administrator",
+        )
 
-    # 3. Fallback to API Key authentication (for CI/CD or CLI usage)
+    # 3. Fallback: Static API Key authentication (for CI/CD or CLI usage)
     expected_key = settings.resolved_admin_api_key().strip()
-    if expected_key and raw_token and raw_token.strip() == expected_key:
+    if expected_key and raw_token.strip() == expected_key:
         return "admin_key_user"
 
-    # If neither matched
+    # If none matched
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Unauthorized admin access: invalid or missing OAuth Session token / Admin key",
+        detail="Unauthorized admin access: invalid or expired Firebase ID token / Admin key",
     )
 
 
