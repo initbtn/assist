@@ -22,6 +22,7 @@ class SessionMetaPayload(BaseModel):
     createdAt: int = 0
     lastActiveAt: int = 0
     unreadAdminCount: int = 0
+    telegramTopicId: int | None = None
 
 
 class MessagePayload(BaseModel):
@@ -45,6 +46,7 @@ def upsert_chat_session(
         createdAt=payload.createdAt,
         lastActiveAt=payload.lastActiveAt,
         unreadAdminCount=payload.unreadAdminCount,
+        telegramTopicId=payload.telegramTopicId,
     )
     store.upsert_session(meta)
     return {"ok": True}

@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+import functools
 import gc
 import json
 import logging
@@ -91,6 +92,7 @@ def fetch_raw_colab_secrets() -> dict[str, str]:
     }
 
 
+@functools.lru_cache(maxsize=1)
 def fetch_raw_gateway_credentials() -> dict[str, str]:
     """Fetches gateway credentials (gateway_token, firestore_sa_key_json).
 
