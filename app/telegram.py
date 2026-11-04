@@ -170,9 +170,12 @@ def handle_telegram_update(
     if text.startswith("/targets"):
         reply = _format_targets_summary(target_store)
     elif text.startswith("/brief"):
-        if enable_colab_gpu and provisioner is not None and hasattr(provisioner, "check_health") and not provisioner.check_health():
-            if hasattr(provisioner, "trigger_background_provision"):
-                provisioner.trigger_background_provision()
+        if enable_colab_gpu and provisioner is not None:
+            if hasattr(provisioner, "touch"):
+                provisioner.touch()
+            if hasattr(provisioner, "check_health") and not provisioner.check_health():
+                if hasattr(provisioner, "trigger_background_provision"):
+                    provisioner.trigger_background_provision()
         recent_docs = retriever.search("recent", k=20)
         article = build_briefing_article(
             recent_docs,
@@ -183,9 +186,12 @@ def handle_telegram_update(
             article_store.save(article)
         reply = format_telegram_brief_message(article)
     else:
-        if enable_colab_gpu and provisioner is not None and hasattr(provisioner, "check_health") and not provisioner.check_health():
-            if hasattr(provisioner, "trigger_background_provision"):
-                provisioner.trigger_background_provision()
+        if enable_colab_gpu and provisioner is not None:
+            if hasattr(provisioner, "touch"):
+                provisioner.touch()
+            if hasattr(provisioner, "check_health") and not provisioner.check_health():
+                if hasattr(provisioner, "trigger_background_provision"):
+                    provisioner.trigger_background_provision()
         result = answer_question(text, retriever=retriever, llm=llm)
         if result.sources:
             sources_text = "\n".join(f"- {s}" for s in result.sources)

@@ -45,6 +45,37 @@ async def test_idle_watcher_scale_to_zero():
 
 
 @pytest.mark.anyio
+async def test_idle_watcher_ignores_provisioning_state():
+    provisioner = ColabProvisioner(base_url="http://mock-ollama:11434")
+    provisioner._state = ProvisionerState.PROVISIONING
+    stop_called = False
+
+    async def mock_stop():
+        nonlocal stop_called
+        stop_called = True
+        return True
+
+    provisioner.stop = mock_stop
+    # Long idle time while provisioning
+    provisioner._last_used_at = time.time() - 100.0
+
+    task = asyncio.create_task(
+        provisioner.start_idle_watcher(idle_timeout_sec=0.1, check_interval_sec=0.05)
+    )
+
+    try:
+        await asyncio.sleep(0.15)
+        assert not stop_called
+        assert provisioner.state == ProvisionerState.PROVISIONING
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.anyio
 async def test_idle_watcher_resets_on_touch():
     provisioner = ColabProvisioner(base_url="http://mock-ollama:11434")
     provisioner._state = ProvisionerState.READY
