@@ -36,12 +36,14 @@ def ingest_document(
     dedup_store: DeduplicationStoreProtocol | None = None,
     chunk_size: int = 1000,
     chunk_overlap: int = 200,
+    inject_header: bool = False,
 ) -> int:
     docs = chunk_text(
         text=text,
         metadata=metadata,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
+        inject_header=inject_header,
     )
     if not docs:
         return 0

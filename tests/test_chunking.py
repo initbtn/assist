@@ -95,3 +95,37 @@ def test_chunk_text_confusing_short_text_with_none_metadata():
     assert len(docs) == 1
     assert docs[0].page_content == "Next.js 16 ships native DevTools MCP server."
     assert docs[0].metadata == {"chunk_index": 0}
+
+
+def test_chunk_text_injects_contextual_header_when_metadata_present():
+    meta = {
+        "domain": "ai_agent_llm",
+        "target_name": "LangChain",
+        "title": "Contextual Retrieval Architecture",
+        "category": "deep_dive",
+        "priority": "high",
+    }
+    text = "Contextual retrieval preserves document context across chunk splits."
+    docs = chunk_text(text=text, metadata=meta, inject_header=True)
+
+    assert len(docs) == 1
+    expected_header = "[도메인: ai_agent_llm | 주제: LangChain | 제목: Contextual Retrieval Architecture]\n"
+    assert docs[0].page_content.startswith(expected_header)
+    assert docs[0].metadata["chunk_index"] == 0
+    assert docs[0].metadata["chunk_count"] == 1
+    assert docs[0].metadata["category"] == "deep_dive"
+    assert docs[0].metadata["priority"] == "high"
+
+
+def test_chunk_text_header_fallback_when_partial_metadata():
+    meta = {
+        "domain": "infra_devops",
+    }
+    text = "Docker containerization best practices."
+    docs = chunk_text(text=text, metadata=meta, inject_header=True)
+
+    assert len(docs) == 1
+    expected_header = "[도메인: infra_devops | 주제: unknown | 제목: untitled]\n"
+    assert docs[0].page_content.startswith(expected_header)
+    assert docs[0].metadata["chunk_count"] == 1
+
