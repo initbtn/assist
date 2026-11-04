@@ -168,6 +168,7 @@ class ColabProvisioner:
             return
 
         self._state = ProvisionerState.PROVISIONING
+        self.touch()
         self._notify("PROVISIONING_STARTED", "🟡 [Colab SLM] 온디맨드 인스턴스 부팅 시작 (GPU: T4)")
 
         def _runner() -> None:
@@ -175,6 +176,7 @@ class ColabProvisioner:
                 success = self._provision_sync()
                 if success:
                     self._state = ProvisionerState.READY
+                    self.touch()
                     self._notify("PROVISIONING_READY", f"🟢 [Colab SLM] 인스턴스 준비 완료 ({self.base_url})")
                 else:
                     self._state = ProvisionerState.IDLE
@@ -215,7 +217,7 @@ class ColabProvisioner:
                 await asyncio.sleep(check_interval_sec)
                 now = time.time()
                 idle_time = now - self._last_used_at
-                if self._state in (ProvisionerState.READY, ProvisionerState.PROVISIONING):
+                if self._state == ProvisionerState.READY:
                     if idle_time >= idle_timeout_sec:
                         logger.info(
                             "Colab PaaS idle timeout reached (idle_time: %.1fs >= %ss). Triggering Scale-to-Zero...",
