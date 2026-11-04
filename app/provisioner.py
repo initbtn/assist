@@ -187,6 +187,46 @@ class ColabProvisioner:
         t = threading.Thread(target=_runner, daemon=True)
         t.start()
 
+    def touch(self) -> None:
+        self._last_used_at = time.time()
+
+    def get_status(self) -> dict[str, Any]:
+        now = time.time()
+        return {
+            "state": self._state.value,
+            "healthy": self.check_health(),
+            "last_used_at": self._last_used_at,
+            "idle_seconds": round(max(0.0, now - self._last_used_at), 1),
+            "base_url": self.base_url,
+        }
+
+    async def start_idle_watcher(
+        self,
+        idle_timeout_sec: float = 900.0,
+        check_interval_sec: float = 30.0,
+    ) -> None:
+        logger.info(
+            "Colab PaaS idle watcher started (timeout: %ss, interval: %ss)",
+            idle_timeout_sec,
+            check_interval_sec,
+        )
+        try:
+            while True:
+                await asyncio.sleep(check_interval_sec)
+                now = time.time()
+                idle_time = now - self._last_used_at
+                if self._state in (ProvisionerState.READY, ProvisionerState.PROVISIONING):
+                    if idle_time >= idle_timeout_sec:
+                        logger.info(
+                            "Colab PaaS idle timeout reached (idle_time: %.1fs >= %ss). Triggering Scale-to-Zero...",
+                            idle_time,
+                            idle_timeout_sec,
+                        )
+                        await self.stop()
+        except asyncio.CancelledError:
+            logger.info("Colab PaaS idle watcher stopped.")
+            raise
+
     def _execute_stop(self) -> bool:
         logger.info("Stopping Colab instance (Scale-to-Zero)...")
         try:
@@ -200,3 +240,13 @@ class ColabProvisioner:
         except Exception as exc:
             logger.warning("Failed to execute colab stop: %s", exc)
             return False
+
+
+_GLOBAL_PROVISIONER: ColabProvisioner | None = None
+
+
+def get_provisioner() -> ColabProvisioner:
+    global _GLOBAL_PROVISIONER
+    if _GLOBAL_PROVISIONER is None:
+        _GLOBAL_PROVISIONER = ColabProvisioner()
+    return _GLOBAL_PROVISIONER

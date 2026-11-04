@@ -1,3 +1,5 @@
+import asyncio
+from contextlib import asynccontextmanager
 from typing import Any, Callable
 
 from fastapi import FastAPI
@@ -9,6 +11,7 @@ from app.auth_oauth import exchange_code_for_user_info
 from app.collectors import _default_github_get
 from app.config import settings
 from app.gateway_chat import router as gateway_chat_router
+from app.provisioner import get_provisioner
 from app.rag import FakeMemoryRetriever, LLMProtocol, PGVectorRetriever
 from app.schemas import (
     AppCreateRequest,
@@ -28,6 +31,20 @@ from app.schemas import (
 from app.targets import InMemoryDeduplicationStore, InMemoryTargetStore
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    provisioner = get_provisioner()
+    watcher_task = asyncio.create_task(
+        provisioner.start_idle_watcher(idle_timeout_sec=900.0, check_interval_sec=30.0)
+    )
+    yield
+    watcher_task.cancel()
+    try:
+        await watcher_task
+    except asyncio.CancelledError:
+        pass
+
+
 def create_app(
     *,
     target_store: InMemoryTargetStore | None = None,
@@ -41,7 +58,10 @@ def create_app(
     default_chat_id: str | None = None,
     base_ui_url: str | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="assist — Personal Dev Trend RAG Assistant")
+    app = FastAPI(
+        title="assist — Personal Dev Trend RAG Assistant",
+        lifespan=lifespan,
+    )
 
     # State injection for dependency injection (DI) support
     app.state.target_store = (
