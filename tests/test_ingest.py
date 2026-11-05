@@ -14,7 +14,30 @@ class FakeVectorStore:
         return [f"id-{i}" for i in range(len(documents))]
 
 
-def test_ingest_document_normal_splits_and_stores_all_chunks():
+def test_ingest_document_with_contextual_header():
+    store = FakeVectorStore()
+    meta = {
+        "domain": "ai_agent_llm",
+        "target_name": "Claude",
+        "title": "Agentic Workflows Guide",
+        "category": "tech_brief",
+        "priority": "normal",
+        "source_url": "https://anthropic.com/research",
+    }
+
+    count = ingest_document(
+        text="Agents orchestrate multi-step tool calls.",
+        metadata=meta,
+        vector_store=store,
+        inject_header=True,
+    )
+
+    assert count == 1
+    stored_doc = store.calls[0][0]
+    assert stored_doc.page_content.startswith("[도메인: ai_agent_llm | 주제: Claude | 제목: Agentic Workflows Guide]\n")
+    assert stored_doc.metadata["chunk_count"] == 1
+    assert stored_doc.metadata["category"] == "tech_brief"
+
     store = FakeVectorStore()
     meta = {
         "domain": "infra_devops",
