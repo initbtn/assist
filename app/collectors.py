@@ -1,7 +1,7 @@
 from typing import Any, Callable
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.ingest import VectorStoreProtocol, ingest_document
@@ -354,3 +354,147 @@ def export_item_to_notion_backlog(item: CollectedItem, token: str, db_id: str) -
         ],
     }
     return _post_to_notion_api(payload, token)
+
+# ==============================================================================
+# Security Knowledge Base Items (CWE, CAPEC, CVE)
+# ==============================================================================
+
+class CweRecordItem(BaseModel):
+    cwe_id: str
+    name: str
+    abstraction: str = ""
+    structure: str = ""
+    status: str = "Stable"
+    description: str
+    extended_description: str = ""
+    likelihood_of_exploit: str = "Medium"
+    mitigations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class CapecRecordItem(BaseModel):
+    capec_id: str
+    name: str
+    abstraction: str = ""
+    status: str = "Stable"
+    summary: str
+    prerequisites: str = ""
+    severity: str = "Medium"
+    likelihood_of_attack: str = "Medium"
+    related_cwe_ids: list[str] = Field(default_factory=list)
+    attack_steps: list[dict[str, Any]] = Field(default_factory=list)
+    mitigations: list[Any] = Field(default_factory=list)
+
+
+class CveRecordItem(BaseModel):
+    cve_id: str
+    published_at: str
+    last_modified_at: str
+    severity: str
+    cvss_score: float | None = None
+    cwe_ids: list[str] = Field(default_factory=list)
+    affected_packages: list[dict[str, Any]] = Field(default_factory=list)
+    summary_en: str
+    summary_ko: str = ""
+    action_guide_ko: str = ""
+    source_url: str = ""
+
+
+def parse_cwe_sample(d: dict[str, Any]) -> CweRecordItem:
+    raw_id = str(d.get("ID") or d.get("cwe_id") or "").strip()
+    cwe_id = raw_id if raw_id.upper().startswith("CWE-") else f"CWE-{raw_id}"
+    return CweRecordItem(
+        cwe_id=cwe_id,
+        name=str(d.get("Name") or d.get("name") or "").strip(),
+        abstraction=str(d.get("Abstraction") or "").strip(),
+        structure=str(d.get("Structure") or "").strip(),
+        status=str(d.get("Status") or "Stable").strip(),
+        description=str(d.get("Description") or "").strip(),
+        extended_description=str(d.get("Extended_Description") or "").strip(),
+        likelihood_of_exploit=str(d.get("Likelihood_Of_Exploit") or "Medium").strip(),
+        mitigations=list(d.get("Mitigations") or []),
+    )
+
+
+def parse_capec_sample(d: dict[str, Any]) -> CapecRecordItem:
+    raw_id = str(d.get("ID") or d.get("capec_id") or "").strip()
+    capec_id = raw_id if raw_id.upper().startswith("CAPEC-") else f"CAPEC-{raw_id}"
+    
+    # Normalize related CWEs
+    raw_cwes = d.get("Related_Weaknesses") or d.get("related_cwe_ids") or []
+    related_cwes = []
+    for c in raw_cwes:
+        s = str(c).strip()
+        if s:
+            related_cwes.append(s if s.upper().startswith("CWE-") else f"CWE-{s}")
+
+    return CapecRecordItem(
+        capec_id=capec_id,
+        name=str(d.get("Name") or d.get("name") or "").strip(),
+        abstraction=str(d.get("Abstraction") or "").strip(),
+        status=str(d.get("Status") or "Stable").strip(),
+        summary=str(d.get("Summary") or "").strip(),
+        prerequisites=str(d.get("Prerequisites") or "").strip(),
+        severity=str(d.get("Severity") or "Medium").strip(),
+        likelihood_of_attack=str(d.get("Likelihood") or "Medium").strip(),
+        related_cwe_ids=related_cwes,
+        attack_steps=list(d.get("Attack_Steps") or []),
+        mitigations=list(d.get("Mitigations") or []),
+    )
+
+
+def parse_nvd_cve_item(d: dict[str, Any]) -> CveRecordItem:
+    cve_data = d.get("cve", d)
+    cve_id = str(cve_data.get("id") or "").strip()
+    published = str(cve_data.get("published") or "").strip()
+    last_mod = str(cve_data.get("lastModified") or "").strip()
+
+    # Descriptions
+    desc_list = cve_data.get("descriptions") or []
+    summary_en = ""
+    for item in desc_list:
+        if item.get("lang") == "en":
+            summary_en = str(item.get("value") or "").strip()
+            break
+    if not summary_en and desc_list:
+        summary_en = str(desc_list[0].get("value") or "").strip()
+
+    # Metrics CVSS V3.1
+    metrics = cve_data.get("metrics") or {}
+    cvss_v31 = metrics.get("cvssMetricV31") or []
+    score = None
+    severity = "MEDIUM"
+    if cvss_v31:
+        cvss_data = cvss_v31[0].get("cvssData") or {}
+        score = cvss_data.get("baseScore")
+        severity = str(cvss_data.get("baseSeverity") or "MEDIUM").upper()
+
+    # CWE Weaknesses
+    cwe_ids = []
+    for w in cve_data.get("weaknesses") or []:
+        for desc in w.get("description") or []:
+            val = str(desc.get("value") or "").strip()
+            if val and val.upper().startswith("CWE-"):
+                cwe_ids.append(val)
+
+    # Affected packages (CPE parse)
+    affected_packages = []
+    for conf in cve_data.get("configurations") or []:
+        for node in conf.get("nodes") or []:
+            for cpe in node.get("cpeMatch") or []:
+                criteria = str(cpe.get("criteria") or "")
+                parts = criteria.split(":")
+                pkg = parts[4] if len(parts) > 4 else criteria
+                version_end = cpe.get("versionEndExcluding") or cpe.get("versionEndIncluding") or ""
+                affected_packages.append({"package": pkg, "version_end": version_end, "criteria": criteria})
+
+    return CveRecordItem(
+        cve_id=cve_id,
+        published_at=published,
+        last_modified_at=last_mod,
+        severity=severity,
+        cvss_score=score,
+        cwe_ids=cwe_ids,
+        affected_packages=affected_packages,
+        summary_en=summary_en,
+        source_url=f"https://nvd.nist.gov/vuln/detail/{cve_id}" if cve_id else "",
+    )
