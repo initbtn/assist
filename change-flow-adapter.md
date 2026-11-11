@@ -26,3 +26,4 @@
 | **중복 처리(②)** | 같은 값(매직 넘버·색·URL·키·문구)이 둘 이상의 자리에 쓰이면 한 곳(상수·토큰·설정)에서 정의해 참조하고, 같은 설명·절차·목록이 둘 이상의 문서나 코드에 있으면 정본 한 곳만 두고 나머지는 그곳을 가리킨다. 환경마다 다른 값은 설정·env 로 받는다. 정본이 따로 있는 문서는 고쳐 쓰지 말고 폐기·stub·링크로 바꾼다 |
 | **문서·주석(②)** | 문서는 최소로 쓰고 중복 금지 — 코드·IaC·spec·이슈·git 이 이미 든 내용은 다시 쓰지 않는다. 쓸 때는 지우면 다음 사람이 같은 실수를 하는 것만 남기고, 그 줄만 읽고 이해되게 짧게 쓴다. 주석엔 링크·이슈 번호를 두지 않고, 미룸은 `TODO: <관측되는 사건>이면 <무엇을 한다>` 한 꼴로만 적는다 |
 | **게이트웨이·스토리지 보안(②)** | **WAS가 유일한 공개 API 게이트웨이** — 브라우저에서 Supabase DB 직접 접근/자격증명 노출 원천 금지(모든 DB 접근은 WAS 경유). 브라우저 스토리지(R2/S3) 직접 쓰기(Presigned PUT 포함) 금지 — 파일 저장은 반드시 WAS 경유 후 백엔드 SDK로 처리 ([ADR 0001](docs/architecture-decision-record/0001-was-gateway-and-storage-security.md) 준수) |
+| **SLM·AI 모델 투명성(②)** | **비중국권 모델 엄격 준수** — 데이터 주권 및 보안 공급망 신뢰성을 위해 비중국권 투명 오픈 모델(Google Gemma 3:12b, Nous/Meta Hermes 3:8b, Snowflake Arctic Embed v2)만 사용하며, 중국계 모델(Qwen, DeepSeek 등) 채택 금지 ([ADR 0004](docs/architecture-decision-record/0004-non-chinese-slm-dual-model-evaluation.md) 준수) |
