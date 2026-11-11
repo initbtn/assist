@@ -323,3 +323,82 @@ def build_vercel_deployment_payload(
         ],
         "target": "production",
     }
+
+# ==============================================================================
+# Daily Briefing Markdown Builder, Firestore Persistence & domlog Publisher
+# ==============================================================================
+import httpx
+
+
+def build_daily_briefing_markdown(briefing: BriefingArticle) -> str:
+    lines: list[str] = [
+        f"# {briefing.title}\n",
+        "> **오늘의 핵심 요약 (Daily Takeaways)**",
+    ]
+    for s in briefing.summary_lines:
+        lines.append(f"> - {s}")
+    lines.append("\n---\n")
+
+    for section in briefing.sections:
+        lines.append(f"## {section.domain_label}\n")
+        for item in section.items:
+            lines.append(f"### {item.title}")
+            lines.append(f"- **대상/기술**: `{item.target_name}`")
+            lines.append(f"- **핵심 내용**: {item.summary}")
+            if item.source_url:
+                lines.append(f"- **원문 링크**: [{item.source_url}]({item.source_url})")
+            lines.append("")
+        lines.append("---\n")
+
+    return "\n".join(lines).strip()
+
+
+def save_briefing_to_firestore(briefing: BriefingArticle, firestore_client: Any = None) -> bool:
+    if firestore_client is None:
+        try:
+            from google.cloud import firestore
+            firestore_client = firestore.Client(project=settings.firebase_project_id)
+        except Exception:
+            return False
+
+    doc_ref = firestore_client.collection("daily_briefings").document(briefing.slug)
+    doc_ref.set(
+        {
+            "slug": briefing.slug,
+            "date": briefing.date,
+            "title": briefing.title,
+            "summary_lines": briefing.summary_lines,
+            "sections": [s.model_dump() for s in briefing.sections],
+            "article_url": briefing.article_url,
+            "created_at": date.today().isoformat(),
+        }
+    )
+    return True
+
+
+def publish_briefing_to_domlog(
+    briefing: BriefingArticle,
+    domlog_base_url: str,
+    admin_api_key: str,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    url = f"{domlog_base_url.rstrip('/')}/api/admin/posts"
+    headers = {
+        "Authorization": f"Bearer {admin_api_key}",
+        "Content-Type": "application/json",
+    }
+    content_md = build_daily_briefing_markdown(briefing)
+    summary_text = " ".join(briefing.summary_lines)[:200]
+    payload = {
+        "title": briefing.title,
+        "slug": briefing.slug,
+        "summary": summary_text,
+        "content": content_md,
+        "tags": ["DailyBriefing", "AI", "Cloud", "Architecture"],
+        "date": briefing.date,
+        "draft": false if "false" in locals() else False,
+    }
+
+    resp = httpx.post(url, headers=headers, json_data=payload if "json_data" in httpx.post.__code__.co_varnames else None, timeout=timeout) if False else httpx.post(url, headers=headers, json=payload, timeout=timeout)
+    resp.raise_for_status()
+    return resp.json()
