@@ -233,3 +233,124 @@ def seed_initial_knowledge(
         )
         total_chunks += chunks
     return total_chunks
+
+# ==============================================================================
+# Daily Intelligence (arXiv, Hugging Face, GitHub Trending) & Notion Bridge
+# ==============================================================================
+import xml.etree.ElementTree as ET
+
+
+def parse_arxiv_papers(xml_text: str) -> list[CollectedItem]:
+    items: list[CollectedItem] = []
+    root = ET.fromstring(xml_text)
+    ns = {"atom": "http://www.w3.org/2005/Atom"}
+    for entry in root.findall("atom:entry", ns):
+        title = entry.findtext("atom:title", default="", namespaces=ns).strip().replace("\n", " ")
+        summary = entry.findtext("atom:summary", default="", namespaces=ns).strip().replace("\n", " ")
+        source_url = entry.findtext("atom:id", default="", namespaces=ns).strip()
+        published = entry.findtext("atom:published", default="", namespaces=ns).strip()
+        if title:
+            items.append(
+                CollectedItem(
+                    title=title,
+                    content=summary,
+                    source_url=source_url,
+                    published_at=published,
+                )
+            )
+    return items
+
+
+def parse_hf_daily_papers(data: list[dict[str, Any]]) -> list[CollectedItem]:
+    items: list[CollectedItem] = []
+    for entry in data:
+        paper_id = entry.get("id") or entry.get("paper", {}).get("id", "")
+        title = entry.get("title") or entry.get("paper", {}).get("title", "")
+        summary = entry.get("summary") or entry.get("paper", {}).get("summary", "")
+        published = entry.get("publishedAt") or entry.get("published", "")
+        source_url = f"https://huggingface.co/papers/{paper_id}" if paper_id else ""
+        if title:
+            items.append(
+                CollectedItem(
+                    title=title.strip(),
+                    content=summary.strip(),
+                    source_url=source_url,
+                    published_at=published,
+                )
+            )
+    return items
+
+
+def parse_github_trending(data: list[dict[str, Any]]) -> list[CollectedItem]:
+    items: list[CollectedItem] = []
+    for repo in data:
+        name = repo.get("name") or repo.get("full_name", "")
+        stars = repo.get("stargazers_count", 0)
+        desc = repo.get("description", "") or ""
+        url = repo.get("html_url", "")
+        if name:
+            title = f"{name} (⭐ {stars})" if stars else name
+            items.append(
+                CollectedItem(
+                    title=title,
+                    content=desc,
+                    source_url=url,
+                    published_at="",
+                )
+            )
+    return items
+
+
+def format_daily_intelligence_report(items: list[CollectedItem], title: str = "📡 데일리 AI 논문/트렌드 브리핑") -> str:
+    lines = [f"<b>{title}</b>\n"]
+    for i, it in enumerate(items, start=1):
+        lines.append(f"{i}. <b>{it.title}</b>")
+        if it.content:
+            short_desc = it.content[:150] + "..." if len(it.content) > 150 else it.content
+            lines.append(f"   <i>{short_desc}</i>")
+        lines.append(f"   🔗 <a href=\"{it.source_url}\">원문 링크</a>\n")
+    return "\n".join(lines)
+
+
+def _post_to_notion_api(payload: dict[str, Any], token: str) -> str:
+    import json, urllib.request
+    req = urllib.request.Request(
+        "https://api.notion.com/v1/pages",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Notion-Version": "2022-06-28",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=10.0) as resp:
+        res = json.loads(resp.read().decode("utf-8"))
+        return res.get("id", "")
+
+
+def export_item_to_notion_backlog(item: CollectedItem, token: str, db_id: str) -> str:
+    payload = {
+        "parent": {"database_id": db_id},
+        "icon": {"type": "emoji", "emoji": "📡"},
+        "properties": {
+            "Name": {
+                "title": [{"type": "text", "text": {"content": item.title}}]
+            },
+            "Status": {"status": {"name": "1. Backlog"}},
+            "Type": {"select": {"name": "리서치"}},
+            "Topic": {"select": {"name": "🦜 LangChain & Agent"}},
+            "GitHub PR": {"url": item.source_url if item.source_url.startswith("http") else None},
+        },
+        "children": [
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {"type": "text", "text": {"content": item.content or "내용 없음"}}
+                    ]
+                },
+            }
+        ],
+    }
+    return _post_to_notion_api(payload, token)
