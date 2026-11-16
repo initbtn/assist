@@ -8,6 +8,7 @@ from app.api.v1.endpoints import (
     chat_models,
     health,
     ingest_query,
+    security_advisory,
     targets,
     webhook,
 )
@@ -23,3 +24,4 @@ api_router.include_router(admin_auth.router, tags=["admin_auth"])
 api_router.include_router(admin_apps.router, tags=["admin_apps"])
 api_router.include_router(admin_colab.router, tags=["admin_colab"])
 api_router.include_router(chat_models.router, tags=["chat_models"])
+api_router.include_router(security_advisory.router, tags=["security"])

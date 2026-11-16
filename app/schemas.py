@@ -77,3 +77,19 @@ class BotConfigUpdateRequest(BaseModel):
     allowed_chat_ids: list[str] | None = None
     enable_colab_gpu: bool | None = None
     rate_limit_rpm: int | None = None
+
+
+class SecurityAdvisoryInput(BaseModel):
+    raw_advisory: str
+    source: str | None = None
+
+
+class SecurityAdvisorySummary(BaseModel):
+    cve_id: str = "UNKNOWN-CVE"
+    severity: str = "MEDIUM"
+    cvss_score: float | None = None
+    cwe_ids: list[str] = Field(default_factory=list)
+    affected_packages: list[str] = Field(default_factory=list)
+    summary_ko: str = ""
+    action_guide_ko: str = ""
+
