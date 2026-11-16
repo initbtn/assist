@@ -8,7 +8,7 @@
 |---|---|
 | **issue(◦)** | issue-first: **버그·규율 결함 = 필수**(수정 前 선등록), 그 외 선택(1인 repo). PR `closes #N` |
 | **마일스톤(◦)** | **없음** |
-| **프로젝트(◦)** | **없음** (`gh` 토큰에 `project` 스코프 미부여로 비활성화) |
+| **프로젝트(◦)** | `notion` (Notion Master Board: `4152e342-7364-81c4-9af1-d8221d4f28f6`) |
 | **착수 표시(◦)** | **켠다** (assignee 를 「지금 이 이슈를 하고 있다」 표시로 사용) |
 | **worktree(①)** | 수동 `git worktree add .claude/worktrees/<name>/ -b <name> origin/main` |
 | **토큰(⓪⑤⑥⑧)** | `GH_TOKEN="$(pass show github/gh-token)"` 또는 `gh` 래퍼 |
