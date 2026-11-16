@@ -38,6 +38,7 @@ def _default_github_get(url: str) -> list[dict[str, Any]]:
         url,
         headers=build_github_headers(settings.resolved_github_token()),
         timeout=15.0,
+        follow_redirects=True,
     )
     resp.raise_for_status()
     data = resp.json()
