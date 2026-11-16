@@ -22,6 +22,31 @@ from app.targets import (
 )
 
 
+def test_default_github_get_follows_301_redirect(monkeypatch):
+    from app.collectors import _default_github_get
+    import httpx
+
+    captured_kwargs = {}
+    original_get = httpx.get
+
+    def fake_get(url, **kwargs):
+        captured_kwargs.update(kwargs)
+        if not kwargs.get("follow_redirects"):
+            resp = httpx.Response(301, headers={"Location": "https://api.github.com/repositories/10270250/releases?per_page=3"})
+            resp.request = httpx.Request("GET", url)
+            return resp
+        resp = httpx.Response(200, json=[{"tag_name": "v19.0.0", "name": "React 19"}])
+        resp.request = httpx.Request("GET", url)
+        return resp
+
+    monkeypatch.setattr("httpx.get", fake_get)
+
+    items = _default_github_get("https://api.github.com/repos/facebook/react/releases?per_page=3")
+    assert captured_kwargs.get("follow_redirects") is True
+    assert len(items) == 1
+    assert items[0]["name"] == "React 19"
+
+
 def test_fetch_github_releases_filters_draft_and_empty_and_validates_repo():
     sample_releases = [
         {
