@@ -1,0 +1,20 @@
+---
+- name: Configure daily collect and brief cron job on edge server
+  hosts: edge_servers
+  gather_facts: false
+
+  tasks:
+    - name: Ensure daily-collect-and-brief.sh exists and is executable
+      ansible.builtin.file:
+        path: /home/dominic/assist/scripts/daily-collect-and-brief.sh
+        state: file
+        mode: '0755'
+
+    - name: Register daily collect and brief cron job (UTC 22:00 = KST 07:00)
+      ansible.builtin.cron:
+        name: "assist-daily-collect-and-brief"
+        minute: "0"
+        hour: "22"
+        user: "dominic"
+        job: "/home/dominic/assist/scripts/daily-collect-and-brief.sh >> /home/dominic/assist/daily-cron.log 2>&1"
+        state: present
